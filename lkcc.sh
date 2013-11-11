@@ -76,8 +76,37 @@ clean_temp() {
 
 #Generate a reports
 generate_reports() {
-	#abi-compliance-checker -l vmlinux -old ABI-X.dump -new ABI-Y.dump -affected-limit 10
-	echo TODO Logic for generating a report
+	local kernels=`ls -l $DUMPS_DIR | grep ".dump" | sed -e 's/\s\+/ /g' | cut -d ' ' -f 9 | sort -V`
+	mapfile -t kernels <<< "`echo $kernels | sed -e 's/.dump//g' | sed -e 's/\s/\n/g'`"
+
+	for kernel in "${kernels[@]}"
+	do
+		if [ $kernel == ${kernels[@]:(-1)} ]
+		then
+			break
+		fi
+
+		local sw=0
+		for kernel_lvl2 in "${kernels[@]}"
+		do
+
+			if [ $sw -eq 1 ]
+			then
+				local old_version_dump="$DUMPS_DIR${kernel}$DUMP_EXTENSION"
+				local new_version_dump="$DUMPS_DIR${kernel_lvl2}$DUMP_EXTENSION"
+				local report_name="$REPORTS_DIR${kernel}---${kernel_lvl2}.html"
+				if [ ! -f "$report_name" ]
+				then
+					"$ABI_COMPLIANCE_CHECKER" -l vmlinux -old "$old_version_dump" -new "$new_version_dump" -affected-limit 10 --report-path="$report_name"
+				fi
+			fi
+
+			if [ $kernel_lvl2 == $kernel ]
+			then
+				sw=1
+			fi
+		done
+	done
 }
 
 ### Main ###
@@ -110,6 +139,6 @@ do
 		ret=$(clean_temp "$kernel_version")
 
 		echo "Generating reports for $kernel_version ..."
-		ret=$(generate_reports "$kernel_version")
+		ret=$(generate_reports)
 	fi
 done
