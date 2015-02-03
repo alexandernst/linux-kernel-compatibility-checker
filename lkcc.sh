@@ -54,11 +54,11 @@ extract_kernel() {
 compile_kernel() {
 	local kdir="$TEMP_DIR$1"
 	#Create a custom .config file
-	make -C "$kdir" O="`pwd`/$kdir" KCONFIG_CONFIG=custom.config defconfig
+	make -C "$kdir" O="`pwd`/$kdir" KCONFIG_CONFIG=custom.config defconfig 2>&1 > /dev/null
 	#Enable CONFIG_DEBUG_INFO
 	echo "CONFIG_DEBUG_INFO=y" >> "$kdir/custom.config"
 	#Make the kernel say "No" to anything that doesn't have a default setting yet
-	make -C "$kdir" O="`pwd`/$kdir" KCONFIG_ALLCONFIG=custom.config allnoconfig
+	make -C "$kdir" O="`pwd`/$kdir" KCONFIG_ALLCONFIG=custom.config allnoconfig 2>&1 > /dev/null
 	ncpu=`cat /proc/cpuinfo | grep processor | wc -l`
 	#Build
 	make -C "$kdir" -j`expr $ncpu + 1`
