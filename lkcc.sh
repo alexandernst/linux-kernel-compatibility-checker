@@ -10,8 +10,10 @@ TEMP_DIR='./temp/'
 KERNEL_EXTENSION='.tar.xz'
 DUMP_EXTENSION='.dump'
 
-ABI_COMPLIANCE_CHECKER='/home/alexandernst/Proyectos/abi-compliance-checker/abi-compliance-checker.pl'
-ABI_DUMPER='/home/alexandernst/Proyectos/abi-dumper/abi-dumper.pl'
+ABI_COMPLIANCE_CHECKER='./bin/abi-compliance-checker/abi-compliance-checker.pl'
+ABI_DUMPER='./bin/abi-dumper/abi-dumper.pl'
+
+PATH=./bin/vtable-dumper:$PATH
 
 #Get list of kernels
 get_kernels() {
