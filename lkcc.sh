@@ -61,7 +61,7 @@ compile_kernel() {
 	make -C "$kdir" O="`pwd`/$kdir" KCONFIG_ALLCONFIG=custom.config allnoconfig 2>&1 > /dev/null
 	ncpu=`cat /proc/cpuinfo | grep processor | wc -l`
 	#Build
-	make -C "$kdir" -j`expr $ncpu + 1`
+	make -C "$kdir"      2>&1 > /dev/null # -j`expr $ncpu + 1`
 	echo "OK"
 }
 
