@@ -11,5 +11,5 @@ This is still a WIP, currently only dumps are generated and only kernel 3.0+ are
 Setup LKCC
 =======
 
-First you need to clone both ```ACC``` and ```AD```, then edit ```lkcc.sh``` writing the right paths
-for ```ACC``` and ```AD```.
+You're not required to do anything at all! Just run the script and it will do everything automatically.
+Oh well, maybe the only thing you'll need to do is compile the vtable dumper inside the `bin` folder.
