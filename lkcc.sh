@@ -1,5 +1,8 @@
 #!/bin/bash
 
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$DIR"
+
 BASE_URL='ftp://ftp.kernel.org/pub/linux/kernel/v3.x/'
 REPORTS_DIR='./reports/'
 DUMPS_DIR='./dumps/'
