@@ -1,0 +1,84 @@
+body {
+    font-family:Arial, sans-serif;
+    font-size:14px;
+    background:#FFFFFF;
+    color:Black;
+}
+hr {
+    color:Black;
+    background-color:Black;
+    height:1px;
+    border:0;
+}
+h1 {
+    font-size:26px;
+    white-space:nowrap;
+}
+h2 {
+    margin-bottom:0px;
+    padding-bottom:0px;
+    font-size:20px;
+    white-space:nowrap;
+}
+table.summary, table.wikitable {
+    border-collapse:collapse;
+    border:1px outset black;
+}
+table.summary td, table.summary th {
+    border:1px inset gray;
+    padding: 3px 5px 3px 5px;
+    white-space:nowrap;
+}
+table.summary th {
+    background-color:#EEEEEE;
+    font-weight:100;
+    text-align:left;
+    padding: 3px;
+    font-size:15px;
+}
+table.summary td {
+    text-align:right;
+    padding-left:10px;
+    padding: 3px 5px 3px 10px;
+    font-size:16px;
+}
+table.wikitable td, table.wikitable th {
+    border:1px inset gray;
+    text-align:center;
+    padding: 3px;
+    white-space:nowrap;
+}
+table.wikitable th {
+    background-color:#EEEEEE;
+    font-size:15px;
+}
+table.wikitable td {
+    font-size:16px;
+}
+table.wikitable td.left {
+    text-align:left;
+    font-size:16px;
+    padding-left:5px;
+    background-color:#F9F9F9;
+}
+td.passed {
+    background-color:#CCFFCC;
+}
+td.warning {
+    background-color:#F4F4AF;
+}
+td.failed {
+    background-color:#FFCCCC;
+}
+td.new {
+    background-color:#C6DEFF;
+}
+a.default {
+    color:#336699;
+}
+th.severity {
+    width:55px;
+}
+sup {
+    font-size:10px;
+}

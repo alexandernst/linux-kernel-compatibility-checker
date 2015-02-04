@@ -1,0 +1,3 @@
+<skip_including>
+    /libmcclient/_gen/
+</skip_including>

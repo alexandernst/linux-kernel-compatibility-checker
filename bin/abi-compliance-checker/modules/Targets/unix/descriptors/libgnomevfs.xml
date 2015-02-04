@@ -1,0 +1,4 @@
+<skip_including>
+    gnome-vfs-cancellable-ops.h
+    gnome-vfs-module-shared.h
+</skip_including>

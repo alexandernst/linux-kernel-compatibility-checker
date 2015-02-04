@@ -1,0 +1,3 @@
+<skip_including>
+    telepathy-glib/_gen
+</skip_including>

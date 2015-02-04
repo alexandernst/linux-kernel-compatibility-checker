@@ -1,0 +1,3 @@
+<skip_including>
+    sres_record.h
+</skip_including>

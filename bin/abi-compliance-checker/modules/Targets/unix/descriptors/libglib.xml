@@ -1,0 +1,3 @@
+<skip_including>
+    gi18n-lib.h
+</skip_including>
