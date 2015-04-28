@@ -1,20 +1,20 @@
 #!/usr/bin/perl
 ###########################################################################
-# ABI Dumper 0.99.7
+# ABI Dumper 0.99.8.1
 # Dump ABI of an ELF object containing DWARF debug info
 #
-# Copyright (C) 2013 ROSA Laboratory
+# Copyright (C) 2012-2015 Andrey Ponomarenko's ABI Laboratory
 #
 # Written by Andrey Ponomarenko
 #
 # PLATFORMS
 # =========
-#  Linux, FreeBSD
+#  Linux
 #
 # REQUIREMENTS
 # ============
-#  Elfutils (eu-readelf)
 #  Perl 5 (5.8 or newer)
+#  Elfutils (eu-readelf)
 #  Vtable-Dumper (1.0 or newer)
 #
 # COMPATIBILITY
@@ -43,7 +43,7 @@ use Cwd qw(abs_path cwd realpath);
 use Storable qw(dclone);
 use Data::Dumper;
 
-my $TOOL_VERSION = "0.99.7";
+my $TOOL_VERSION = "0.99.8.1";
 my $ABI_DUMP_VERSION = "3.2";
 my $ORIG_DIR = cwd();
 my $TMP_DIR = tempdir(CLEANUP=>1);
@@ -75,7 +75,7 @@ my %ERROR_CODE = (
 
 my $ShortUsage = "ABI Dumper $TOOL_VERSION
 Dump ABI of an ELF object containing DWARF debug info
-Copyright (C) 2013 ROSA Laboratory
+Copyright (C) 2015 Andrey Ponomarenko's ABI Laboratory
 License: GNU LGPL or GNU GPL
 
 Usage: $CmdName [options] [object]
@@ -3180,7 +3180,7 @@ sub getSymbolInfo($)
             }
             
             if(defined $Checked_Spec{$MnglName}
-            or not $DWARF_Info{$ID}{"specification"})
+            or (not $DWARF_Info{$ID}{"specification"} and not $DWARF_Info{$ID}{"low_pc"}))
             {
                 if(not defined $SpecElem{$ID}
                 and not defined $OrigElem{$ID}) {
@@ -4235,7 +4235,7 @@ sub scenario()
     }
     if($ShowVersion)
     {
-        printMsg("INFO", "ABI Dumper $TOOL_VERSION\nCopyright (C) 2013 ROSA Laboratory\nLicense: LGPL or GPL <http://www.gnu.org/licenses/>\nThis program is free software: you can redistribute it and/or modify it.\n\nWritten by Andrey Ponomarenko.");
+        printMsg("INFO", "ABI Dumper $TOOL_VERSION\nCopyright (C) 2015 Andrey Ponomarenko's ABI Laboratory\nLicense: LGPL or GPL <http://www.gnu.org/licenses/>\nThis program is free software: you can redistribute it and/or modify it.\n\nWritten by Andrey Ponomarenko.");
         exit(0);
     }
     if($DumpVersion)
