@@ -1,12 +1,12 @@
 #!/usr/bin/perl
 ###########################################################################
-# ABI Compliance Checker (ABICC) 1.99.9.1
+# ABI Compliance Checker (ABICC) 1.99.10
 # A tool for checking backward compatibility of a C/C++ library API
 #
-# Copyright (C) 2009-2010 The Linux Foundation
 # Copyright (C) 2009-2011 Institute for System Programming, RAS
 # Copyright (C) 2011-2012 Nokia Corporation and/or its subsidiary(-ies)
-# Copyright (C) 2011-2014 ROSA Laboratory
+# Copyright (C) 2012-2013 ROSA Laboratory
+# Copyright (C) 2013-2015 Andrey Ponomarenko's ABI Laboratory
 #
 # Written by Andrey Ponomarenko
 #
@@ -38,7 +38,7 @@
 #
 # COMPATIBILITY
 # =============
-#  ABI Dumper >= 0.98
+#  ABI Dumper >= 0.99.9
 #
 #
 # This program is free software: you can redistribute it and/or modify
@@ -64,14 +64,14 @@ use Storable qw(dclone);
 use Data::Dumper;
 use Config;
 
-my $TOOL_VERSION = "1.99.9.1";
+my $TOOL_VERSION = "1.99.10";
 my $ABI_DUMP_VERSION = "3.2";
-my $OLDEST_SUPPORTED_VERSION = "1.18";
 my $XML_REPORT_VERSION = "1.2";
 my $XML_ABI_DUMP_VERSION = "1.2";
 my $OSgroup = get_OSgroup();
 my $ORIG_DIR = cwd();
 my $TMP_DIR = tempdir(CLEANUP=>1);
+my $LOCALE = "C.UTF-8";
 
 # Internal modules
 my $MODULES_DIR = get_Modules();
@@ -81,20 +81,20 @@ my %RULES_PATH = (
     "Binary" => $MODULES_DIR."/RulesBin.xml",
     "Source" => $MODULES_DIR."/RulesSrc.xml");
 
-my ($Help, $ShowVersion, %Descriptor, $TargetLibraryName, $GenerateTemplate,
+my ($Help, $ShowVersion, %Descriptor, $TargetLibraryName,
 $TestTool, $DumpAPI, $SymbolsListPath, $CheckHeadersOnly_Opt, $UseDumps,
-$CheckObjectsOnly_Opt, $AppPath, $StrictCompat, $DumpVersion, $ParamNamesPath,
-%RelativeDirectory, $TargetLibraryFName, $TestDump, $CheckImpl, $LoggingPath,
-%TargetVersion, $InfoMsg, $UseOldDumps, $CrossGcc, %OutputLogPath,
+$AppPath, $StrictCompat, $DumpVersion, $ParamNamesPath,
+%RelativeDirectory, $TargetTitle, $TestDump, $LoggingPath,
+%TargetVersion, $InfoMsg, $CrossGcc, %OutputLogPath,
 $OutputReportPath, $OutputDumpPath, $ShowRetVal, $SystemRoot_Opt, $DumpSystem,
 $CmpSystems, $TargetLibsPath, $Debug, $CrossPrefix, $UseStaticLibs, $NoStdInc,
 $TargetComponent_Opt, $TargetSysInfo, $TargetHeader, $ExtendedCheck, $Quiet,
 $SkipHeadersPath, $CppCompat, $LogMode, $StdOut, $ListAffected, $ReportFormat,
 $UserLang, $TargetHeadersPath, $BinaryOnly, $SourceOnly, $BinaryReportPath,
-$SourceReportPath, $UseXML, $Browse, $OpenReport, $SortDump, $DumpFormat,
+$SourceReportPath, $UseXML, $SortDump, $DumpFormat,
 $ExtraInfo, $ExtraDump, $Force, $Tolerance, $Tolerant, $SkipSymbolsListPath,
 $CheckInfo, $Quick, $AffectLimit, $AllAffected, $CppIncompat, $SkipInternal,
-$TargetArch, $GccOptions);
+$TargetArch, $GccOptions, $TypesListPath);
 
 my $CmdName = get_filename($0);
 my %OS_LibExt = (
@@ -147,14 +147,11 @@ my %ERROR_CODE = (
     "Empty_Set"=>11
 );
 
-my %HomePage = (
-    "Wiki"=>"http://ispras.linuxbase.org/index.php/ABI_compliance_checker",
-    "Dev"=>"https://github.com/lvc/abi-compliance-checker"
-);
+my $HomePage = "http://lvc.github.io/abi-compliance-checker/";
 
 my $ShortUsage = "ABI Compliance Checker (ABICC) $TOOL_VERSION
 A tool for checking backward compatibility of a C/C++ library API
-Copyright (C) 2014 ROSA Laboratory
+Copyright (C) 2015 Andrey Ponomarenko's ABI Laboratory
 License: GNU LGPL or GNU GPL
 
 Usage: $CmdName [options]
@@ -182,26 +179,6 @@ if($#ARGV==-1)
     exit(0);
 }
 
-foreach (2 .. $#ARGV)
-{ # correct comma separated options
-    if($ARGV[$_-1] eq ",")
-    {
-        $ARGV[$_-2].=",".$ARGV[$_];
-        splice(@ARGV, $_-1, 2);
-    }
-    elsif($ARGV[$_-1]=~/,\Z/)
-    {
-        $ARGV[$_-1].=$ARGV[$_];
-        splice(@ARGV, $_, 1);
-    }
-    elsif($ARGV[$_]=~/\A,/
-    and $ARGV[$_] ne ",")
-    {
-        $ARGV[$_-1].=$ARGV[$_];
-        splice(@ARGV, $_, 1);
-    }
-}
-
 GetOptions("h|help!" => \$Help,
   "i|info!" => \$InfoMsg,
   "v|version!" => \$ShowVersion,
@@ -211,9 +188,7 @@ GetOptions("h|help!" => \$Help,
   "d1|old|o=s" => \$Descriptor{1}{"Path"},
   "d2|new|n=s" => \$Descriptor{2}{"Path"},
   "dump|dump-abi|dump_abi=s" => \$DumpAPI,
-  "old-dumps!" => \$UseOldDumps,
 # extra options
-  "d|descriptor-template!" => \$GenerateTemplate,
   "app|application=s" => \$AppPath,
   "static-libs!" => \$UseStaticLibs,
   "gcc-path|cross-gcc=s" => \$CrossGcc,
@@ -224,13 +199,12 @@ GetOptions("h|help!" => \$Help,
   "v2|version2=s" => \$TargetVersion{2},
   "s|strict!" => \$StrictCompat,
   "symbols-list=s" => \$SymbolsListPath,
+  "types-list=s" => \$TypesListPath,
   "skip-symbols=s" => \$SkipSymbolsListPath,
   "headers-list=s" => \$TargetHeadersPath,
   "skip-headers=s" => \$SkipHeadersPath,
   "header=s" => \$TargetHeader,
   "headers-only|headers_only!" => \$CheckHeadersOnly_Opt,
-  "objects-only!" => \$CheckObjectsOnly_Opt,
-  "check-impl|check-implementation!" => \$CheckImpl,
   "show-retval!" => \$ShowRetVal,
   "use-dumps!" => \$UseDumps,
   "nostdinc!" => \$NoStdInc,
@@ -268,10 +242,8 @@ GetOptions("h|help!" => \$Help,
   "log2-path=s" => \$OutputLogPath{2},
   "logging-mode=s" => \$LogMode,
   "list-affected!" => \$ListAffected,
-  "l-full|lib-full=s" => \$TargetLibraryFName,
+  "title|l-full|lib-full=s" => \$TargetTitle,
   "component=s" => \$TargetComponent_Opt,
-  "b|browse=s" => \$Browse,
-  "open!" => \$OpenReport,
   "extra-info=s" => \$ExtraInfo,
   "extra-dump!" => \$ExtraDump,
   "force!" => \$Force,
@@ -391,16 +363,13 @@ GENERAL OPTIONS:
                    ...
               </libs>
 
-                 ... (XML-descriptor template
-                         can be generated by -d option)
+                 ...
              
          2. ABI dump generated by -dump option
          3. Directory with headers and/or $SLIB_TYPE libraries
          4. Single header file
-         5. Single $SLIB_TYPE library
-         6. Comma separated list of headers and/or libraries
 
-      If you are using an 2-6 descriptor types then you should
+      If you are using an 2-4 descriptor types then you should
       specify version numbers with -v1 and -v2 options too.
 
       For more information, please see:
@@ -414,10 +383,7 @@ GENERAL OPTIONS:
       transfer it anywhere and pass instead of the descriptor. Also
       it can be used for debugging the tool.
       
-      Supported ABI dump versions: 2.0<=V<=$ABI_DUMP_VERSION
-
-  -old-dumps
-      Enable support for old-version ABI dumps ($OLDEST_SUPPORTED_VERSION<=V<2.0).\n";
+      Supported versions of ABI dump: 2.0<=V<=$ABI_DUMP_VERSION\n";
 
 sub HELP_MESSAGE() {
     printMsg("INFO", $HelpMessage."
@@ -429,11 +395,8 @@ sub INFO_MESSAGE()
 {
     printMsg("INFO", "$HelpMessage
 EXTRA OPTIONS:
-  -d|-descriptor-template
-      Create XML-descriptor template ./VERSION.xml
-
   -app|-application PATH
-      This option allows one to specify the application that should be checked
+      This option allows to specify the application that should be checked
       for portability to the new library version.
 
   -static-libs
@@ -481,28 +444,16 @@ EXTRA OPTIONS:
               none
           </libs>
 
-  -objects-only
-      Check $SLIB_TYPE libraries without header files. It is easy to run, but may
-      provide a low quality compatibility report with false positives and
-      without analysis of changes in parameters and data types.
-
-      Alternatively you can write \"none\" word to the <headers> section
-      in the XML-descriptor:
-          <headers>
-              none
-          </headers>
-
-  -check-impl|-check-implementation
-      Compare canonified disassembled binary code of $SLIB_TYPE libraries to
-      detect changes in the implementation. Add \'Problems with Implementation\'
-      section to the report.
-
   -show-retval
       Show the symbol's return type in the report.
 
   -symbols-list PATH
-      This option allows one to specify a file with a list of symbols (mangled
-      names in C++) that should be checked, other symbols will not be checked.
+      This option allows to specify a file with a list of symbols (mangled
+      names in C++) that should be checked. Other symbols will not be checked.
+  
+  -types-list PATH
+      This option allows to specify a file with a list of types that should
+      be checked. Other types will not be checked.
       
   -skip-symbols PATH
       The list of symbols that should NOT be checked.
@@ -584,9 +535,9 @@ EXTRA OPTIONS:
           </gcc_options>
 
   -sysinfo DIR
-      This option may be used with -dump-system to dump ABI of operating
-      systems and configure the dumping process.
-      Default:
+      This option should be used with -dump-system option to dump
+      ABI of operating systems and configure the dumping process.
+      You can find a sample in the package:
           modules/Targets/{unix, symbian, windows}
 
   -cmp-systems -d1 sys_dumps/NAME1/ARCH -d2 sys_dumps/NAME2/ARCH
@@ -661,7 +612,7 @@ OTHER OPTIONS:
   -test
       Run internal tests. Create two binary incompatible versions of a sample
       library and run the tool to check them for compatibility. This option
-      allows one to check if the tool works correctly in the current environment.
+      allows to check if the tool works correctly in the current environment.
 
   -test-dump
       Test ability to create, read and compare ABI dumps.
@@ -758,16 +709,10 @@ OTHER OPTIONS:
       The component name in the title and summary of the HTML report.
       Default:
           library
-      
-  -l-full|-lib-full NAME
+
+  -title NAME
       Change library name in the report title to NAME. By default
       will be displayed a name specified by -l option.
-
-  -b|-browse PROGRAM
-      Open report(s) in the browser (firefox, opera, etc.).
-
-  -open
-      Open report(s) in the default browser.
       
   -extra-info DIR
       Dump extra info to DIR.
@@ -813,134 +758,9 @@ EXIT CODES:
     0 - Compatible. The tool has run without any errors.
     non-zero - Incompatible or the tool has run with errors.
 
-REPORT BUGS TO:
-    Andrey Ponomarenko <aponomarenko\@rosalab.ru>
-
 MORE INFORMATION:
-    ".$HomePage{"Wiki"}."
-    ".$HomePage{"Dev"}."\n");
+    ".$HomePage."\n");
 }
-
-my $DescriptorTemplate = "
-<?xml version=\"1.0\" encoding=\"utf-8\"?>
-<descriptor>
-
-/* Primary sections */
-
-<version>
-    /* Version of the library */
-</version>
-
-<headers>
-    /* The list of paths to header files and/or
-       directories with header files, one per line */
-</headers>
-
-<libs>
-    /* The list of paths to shared libraries (*.$LIB_EXT) and/or
-       directories with shared libraries, one per line */
-</libs>
-
-/* Optional sections */
-
-<include_paths>
-    /* The list of include paths that will be provided
-       to GCC to compile library headers, one per line.
-       NOTE: If you define this section then the tool
-       will not automatically generate include paths */
-</include_paths>
-
-<add_include_paths>
-    /* The list of include paths that will be added
-       to the automatically generated include paths, one per line */
-</add_include_paths>
-
-<skip_include_paths>
-    /* The list of include paths that will be removed from the
-       list of automatically generated include paths, one per line */
-</skip_include_paths>
-
-<gcc_options>
-    /* Additional GCC options, one per line */
-</gcc_options>
-
-<include_preamble>
-    /* The list of header files that will be
-       included before other headers, one per line  */
-</include_preamble>
-
-<defines>
-    /* The list of defines that will be added at the
-       headers compiling stage, one per line:
-          #define A B
-          #define C D */
-</defines>
-
-<add_namespaces>
-    /* The list of namespaces that should be added to the alanysis
-       if the tool cannot find them automatically, one per line */
-</add_namespaces>
-
-<skip_types>
-    /* The list of data types, that
-       should not be checked, one per line */
-</skip_types>
-
-<skip_symbols>
-    /* The list of functions (mangled/symbol names in C++),
-       that should not be checked, one per line */
-</skip_symbols>
-
-<skip_namespaces>
-    /* The list of C++ namespaces, that
-       should not be checked, one per line */
-</skip_namespaces>
-
-<skip_constants>
-    /* The list of constants that should
-       not be checked, one name per line */
-</skip_constants>
-
-<skip_headers>
-    /* The list of header files and/or directories
-       with header files that should not be checked, one per line */
-</skip_headers>
-
-<skip_libs>
-    /* The list of shared libraries and/or directories
-       with shared libraries that should not be checked, one per line */
-</skip_libs>
-
-<skip_including>
-    /* The list of header files, that cannot be included
-       directly (or non-self compiled ones), one per line */
-</skip_including>
-
-<search_headers>
-    /* List of directories to be searched
-       for header files to automatically
-       generate include paths, one per line. */
-</search_headers>
-
-<search_libs>
-    /* List of directories to be searched
-       for shared librariess to resolve
-       dependencies, one per line */
-</search_libs>
-
-<tools>
-    /* List of directories with tools used
-       for analysis (GCC toolchain), one per line */
-</tools>
-
-<cross_prefix>
-    /* GCC toolchain prefix.
-       Examples:
-           arm-linux-gnueabi
-           arm-none-symbianelf */
-</cross_prefix>
-
-</descriptor>";
 
 my %Operator_Indication = (
     "not" => "~",
@@ -1403,7 +1223,6 @@ my $GLIBC_TESTING = 0;
 my $CPP_HEADERS = 0;
 
 my $CheckHeadersOnly = $CheckHeadersOnly_Opt;
-my $CheckObjectsOnly = $CheckObjectsOnly_Opt;
 
 my $TargetComponent;
 
@@ -1419,7 +1238,7 @@ else
     $TargetComponent = "library";
 }
 
-my $TOP_REF = "<a style='font-size:11px;' href='#Top'>to the top</a>";
+my $TOP_REF = "<a class='top_ref' href='#Top'>to the top</a>";
 
 my $SystemRoot;
 
@@ -1501,7 +1320,7 @@ my %AddNameSpaces = (
   "1"=>{},
   "2"=>{} );
 my %SymbolsList;
-my %SkipSymbolsList;
+my %TypesList;
 my %SymbolsList_App;
 my %CheckedSymbols;
 my %Symbol_Library = (
@@ -1519,7 +1338,6 @@ my %DepLibrary_Symbol = (
 my %MangledNames;
 my %Func_ShortName;
 my %AddIntParams;
-my %Interface_Impl;
 my %GlobalDataObject;
 my %WeakSymbols;
 my %Library_Needed= (
@@ -1632,11 +1450,11 @@ my %UseConv_Real = (
 # ABI Dump
 my %UsedDump;
 
-# OS Compliance
+# Filters
 my %TargetLibs;
 my %TargetHeaders;
 
-# OS Specifics
+# Format of objects
 my $OStarget = $OSgroup;
 my %TargetTools;
 
@@ -1667,7 +1485,6 @@ my %SymVer = (
 # Problem descriptions
 my %CompatProblems;
 my %CompatProblems_Constants;
-my %CompatProblems_Impl;
 my %TotalAffected;
 
 # Reports
@@ -1982,29 +1799,27 @@ sub readDescriptor($$)
         }
     }
     
-    if(not $CheckObjectsOnly_Opt)
-    {
-        my $DHeaders = parseTag(\$Content, "headers");
-        if(not $DHeaders) {
-            exitStatus("Error", "header files in the $DName are not specified (<headers> section)");
+    my $DHeaders = parseTag(\$Content, "headers");
+    if(not $DHeaders) {
+        exitStatus("Error", "header files in the $DName are not specified (<headers> section)");
+    }
+    elsif(lc($DHeaders) ne "none")
+    { # append the descriptor headers list
+        if($Descriptor{$LibVersion}{"Headers"})
+        { # multiple descriptors
+            $Descriptor{$LibVersion}{"Headers"} .= "\n".$DHeaders;
         }
-        elsif(lc($DHeaders) ne "none")
-        { # append the descriptor headers list
-            if($Descriptor{$LibVersion}{"Headers"})
-            { # multiple descriptors
-                $Descriptor{$LibVersion}{"Headers"} .= "\n".$DHeaders;
-            }
-            else {
-                $Descriptor{$LibVersion}{"Headers"} = $DHeaders;
-            }
-            foreach my $Path (split(/\s*\n\s*/, $DHeaders))
-            {
-                if(not -e $Path) {
-                    exitStatus("Access_Error", "can't access \'$Path\'");
-                }
+        else {
+            $Descriptor{$LibVersion}{"Headers"} = $DHeaders;
+        }
+        foreach my $Path (split(/\s*\n\s*/, $DHeaders))
+        {
+            if(not -e $Path) {
+                exitStatus("Access_Error", "can't access \'$Path\'");
             }
         }
     }
+    
     if(not $CheckHeadersOnly_Opt)
     {
         my $DObjects = parseTag(\$Content, "libs");
@@ -6691,7 +6506,7 @@ sub searchForHeaders($)
                     }
                 }
                 if(keys(%Identity)==keys(%{$HeaderName_Paths{$LibVersion}{$Header_Name}}))
-                { # all names are differend with current prefix
+                { # all names are different with current prefix
                     foreach my $Path (keys(%{$HeaderName_Paths{$LibVersion}{$Header_Name}})) {
                         $Registered_Headers{$LibVersion}{$Path}{"Identity"} = $Identity{$Path};
                     }
@@ -7551,40 +7366,6 @@ sub unmangleArray(@)
     }
 }
 
-sub get_SignatureNoInfo($$)
-{
-    my ($Symbol, $LibVersion) = @_;
-    if($Cache{"get_SignatureNoInfo"}{$LibVersion}{$Symbol}) {
-        return $Cache{"get_SignatureNoInfo"}{$LibVersion}{$Symbol};
-    }
-    my ($MnglName, $VersionSpec, $SymbolVersion) = separate_symbol($Symbol);
-    my $Signature = $tr_name{$MnglName}?$tr_name{$MnglName}:$MnglName;
-    if($Symbol=~/\A(_Z|\?)/)
-    { # C++
-        # some standard typedefs
-        $Signature=~s/\Qstd::basic_string<char, std::char_traits<char>, std::allocator<char> >\E/std::string/g;
-        $Signature=~s/\Qstd::map<std::string, std::string, std::less<std::string >, std::allocator<std::pair<std::string const, std::string > > >\E/std::map<std::string, std::string>/g;
-    }
-    if(not $CheckObjectsOnly or $OSgroup=~/linux|bsd|beos/i)
-    { # ELF format marks data as OBJECT
-        if($GlobalDataObject{$LibVersion}{$Symbol}) {
-            $Signature .= " [data]";
-        }
-        elsif($Symbol!~/\A(_Z|\?)/) {
-            $Signature .= " (...)";
-        }
-    }
-    if(my $ChargeLevel = get_ChargeLevel($Symbol, $LibVersion))
-    {
-        my $ShortName = substr($Signature, 0, find_center($Signature, "("));
-        $Signature=~s/\A\Q$ShortName\E/$ShortName $ChargeLevel/g;
-    }
-    if($SymbolVersion) {
-        $Signature .= $VersionSpec.$SymbolVersion;
-    }
-    return ($Cache{"get_SignatureNoInfo"}{$LibVersion}{$Symbol} = $Signature);
-}
-
 sub get_ChargeLevel($$)
 {
     my ($Symbol, $LibVersion) = @_;
@@ -7653,11 +7434,8 @@ sub get_Signature($$)
         return $Cache{"get_Signature"}{$LibVersion}{$Symbol};
     }
     my ($MnglName, $VersionSpec, $SymbolVersion) = separate_symbol($Symbol);
-    if(isPrivateData($MnglName) or not $CompleteSignature{$LibVersion}{$Symbol}{"Header"})
-    { # non-public global data
-        return get_SignatureNoInfo($Symbol, $LibVersion);
-    }
     my ($Signature, @Param_Types_FromUnmangledName) = ();
+    
     my $ShortName = $CompleteSignature{$LibVersion}{$Symbol}{"ShortName"};
     if($Symbol=~/\A(_Z|\?)/)
     {
@@ -8892,13 +8670,9 @@ sub cmd_find($;$$$$)
     return () if(not $Path or not -e $Path);
     if($OSgroup eq "windows")
     {
-        my $DirCmd = get_CmdPath("dir");
-        if(not $DirCmd) {
-            exitStatus("Not_Found", "can't find \"dir\" command");
-        }
         $Path = get_abs_path($Path);
         $Path = path_format($Path, $OSgroup);
-        my $Cmd = $DirCmd." \"$Path\" /B /O";
+        my $Cmd = "dir \"$Path\" /B /O";
         if($MaxDepth!=1) {
             $Cmd .= " /S";
         }
@@ -9334,7 +9108,7 @@ sub prepareSymbols($)
     
     if(not keys(%{$SymbolInfo{$LibVersion}}))
     { # check if input is valid
-        if(not $ExtendedCheck and not $CheckObjectsOnly)
+        if(not $ExtendedCheck)
         {
             if($CheckHeadersOnly) {
                 exitStatus("Empty_Set", "the set of public symbols is empty (".$Descriptor{$LibVersion}{"Version"}.")");
@@ -9870,7 +9644,7 @@ sub selectSymbol($$$$)
         elsif($Level eq "Source")
         { # checked
             if($SInfo->{"PureVirt"} or $SInfo->{"Data"} or $SInfo->{"InLine"}
-            or isInLineInst($Symbol, $SInfo, $LibVersion))
+            or isInLineInst($SInfo, $LibVersion))
             { # skip LOCAL symbols
                 if($Target) {
                     return 1;
@@ -9944,7 +9718,7 @@ sub cleanDump($)
     }
 }
 
-sub selectType($$)
+sub pickType($$)
 {
     my ($Tid, $LibVersion) = @_;
     
@@ -9959,25 +9733,49 @@ sub selectType($$)
         }
     }
     
+    my $THeader = $TypeInfo{$LibVersion}{$Tid}{"Header"};
+    
+    if(isBuiltIn($THeader)) {
+        return 0;
+    }
+    
+    if($TypeInfo{$LibVersion}{$Tid}{"Type"}!~/Class|Struct|Union|Enum|Typedef/) {
+        return 0;
+    }
+    
+    if(isAnon($TypeInfo{$LibVersion}{$Tid}{"Name"})) {
+        return 0;
+    }
+    
+    if(selfTypedef($Tid, $LibVersion)) {
+        return 0;
+    }
+    
+    if(not isTargetType($Tid, $LibVersion)) {
+        return 0;
+    }
+    
+    return 0;
+}
+
+sub isTargetType($$)
+{
+    my ($Tid, $LibVersion) = @_;
+    
+    if($TypeInfo{$LibVersion}{$Tid}{"Type"}!~/Class|Struct|Union|Enum|Typedef/)
+    { # derived
+        return 1;
+    }
+    
     if(my $THeader = $TypeInfo{$LibVersion}{$Tid}{"Header"})
     {
-        if(not isBuiltIn($THeader))
-        {
-            if($TypeInfo{$LibVersion}{$Tid}{"Type"}=~/Class|Struct|Union|Enum|Typedef/)
-            {
-                if(not isAnon($TypeInfo{$LibVersion}{$Tid}{"Name"}))
-                {
-                    if(is_target_header($THeader, $LibVersion))
-                    { # from target headers
-                        if(not selfTypedef($Tid, $LibVersion)) {
-                            return 1;
-                        }
-                    }
-                }
-            }
+        if(not is_target_header($THeader, $LibVersion))
+        { # from target headers
+            return 0;
         }
     }
-    return 0;
+    
+    return 1;
 }
 
 sub remove_Unused($$)
@@ -9999,7 +9797,7 @@ sub remove_Unused($$)
         
         if($Kind eq "Extended")
         {
-            if(selectType($Tid, $LibVersion))
+            if(pickType($Tid, $LibVersion))
             {
                 my %Tree = ();
                 register_TypeUsage($Tid, \%Tree, $LibVersion);
@@ -10195,7 +9993,7 @@ sub addExtension($)
     my $LibVersion = $_[0];
     foreach my $Tid (sort {int($a)<=>int($b)} keys(%{$TypeInfo{$LibVersion}}))
     {
-        if(selectType($Tid, $LibVersion))
+        if(pickType($Tid, $LibVersion))
         {
             my $TName = $TypeInfo{$LibVersion}{$Tid}{"Name"};
             $TName=~s/\A(struct|union|class|enum) //;
@@ -10638,6 +10436,7 @@ sub cmpVTables_Real($$)
             return ($Cache{"cmpVTables_Real"}{$Strong}{$ClassName} = ($Strong or $Entry1!~/__cxa_pure_virtual/));
         }
         my $Entry2 = $VTable_New{$Offset};
+        
         $Entry1 = simpleVEntry($Entry1);
         $Entry2 = simpleVEntry($Entry2);
         if($Entry1 ne $Entry2)
@@ -10824,6 +10623,13 @@ sub mergeBases($)
                 $ClassId_New = $Class_New{"Tid"};
             }
         }
+        
+        if(not $Class_New{"Size"} or not $Class_Old{"Size"})
+        { # incomplete info in the ABI dump
+            next;
+        }
+        
+        
         my @Bases_Old = sort {$Class_Old{"Base"}{$a}{"pos"}<=>$Class_Old{"Base"}{$b}{"pos"}} keys(%{$Class_Old{"Base"}});
         my @Bases_New = sort {$Class_New{"Base"}{$a}{"pos"}<=>$Class_New{"Base"}{$b}{"pos"}} keys(%{$Class_New{"Base"}});
         
@@ -11618,6 +11424,13 @@ sub mergeTypes($$$)
     return {} if($SkipTypes{1}{$Type1_Pure{"Name"}});
     return {} if($SkipTypes{1}{$Type1{"Name"}});
     
+    if(defined $TargetHeadersPath)
+    {
+        if(not isTargetType($Type1_Pure{"Tid"}, 1)) {
+            return {};
+        }
+    }
+    
     if($Type1_Pure{"Type"}=~/Class|Struct/ and $Type2_Pure{"Type"}=~/Class|Struct/)
     { # support for old ABI dumps
       # _vptr field added in 3.0
@@ -11652,7 +11465,7 @@ sub mergeTypes($$$)
     my %Typedef_1 = goToFirst($Type1{"Tid"}, 1, "Typedef");
     my %Typedef_2 = goToFirst($Type2{"Tid"}, 2, "Typedef");
     
-    if(not $UseOldDumps and %Typedef_1 and %Typedef_2
+    if(%Typedef_1 and %Typedef_2
     and $Typedef_1{"Type"} eq "Typedef" and $Typedef_2{"Type"} eq "Typedef"
     and $Typedef_1{"Name"} eq $Typedef_2{"Name"})
     {
@@ -12537,57 +12350,37 @@ sub isPrivateData($)
     return ($Symbol=~/\A(_ZGV|_ZTI|_ZTS|_ZTT|_ZTV|_ZTC|_ZThn|_ZTv0_n)/);
 }
 
-sub isInLineInst($$$) {
+sub isInLineInst($$) {
     return (isTemplateInstance(@_) and not isTemplateSpec(@_));
 }
 
-sub isTemplateInstance($$$)
+sub isTemplateInstance($$)
 {
-    my ($Symbol, $SInfo, $LibVersion) = @_;
-    if($CheckObjectsOnly)
+    my ($SInfo, $LibVersion) = @_;
+    
+    if(my $ClassId = $SInfo->{"Class"})
     {
-        if($Symbol!~/\A(_Z|\?)/) {
-            return 0;
-        }
-        if(my $Signature = $tr_name{$Symbol})
+        if(my $ClassName = $TypeInfo{$LibVersion}{$ClassId}{"Name"})
         {
-            if(index($Signature,">")==-1) {
-                return 0;
-            }
-            if(my $ShortName = substr($Signature, 0, find_center($Signature, "(")))
-            {
-                if(index($ShortName,"<")!=-1
-                and index($ShortName,">")!=-1) {
-                    return 1;
-                }
-            }
-        }
-    }
-    else
-    {
-        if(my $ClassId = $SInfo->{"Class"})
-        {
-            if(my $ClassName = $TypeInfo{$LibVersion}{$ClassId}{"Name"})
-            {
-                if(index($ClassName,"<")!=-1) {
-                    return 1;
-                }
-            }
-        }
-        if(my $ShortName = $SInfo->{"ShortName"})
-        {
-            if(index($ShortName,"<")!=-1
-            and index($ShortName,">")!=-1) {
+            if(index($ClassName,"<")!=-1) {
                 return 1;
             }
         }
     }
+    if(my $ShortName = $SInfo->{"ShortName"})
+    {
+        if(index($ShortName,"<")!=-1
+        and index($ShortName,">")!=-1) {
+            return 1;
+        }
+    }
+    
     return 0;
 }
 
-sub isTemplateSpec($$$)
+sub isTemplateSpec($$)
 {
-    my ($Symbol, $SInfo, $LibVersion) = @_;
+    my ($SInfo, $LibVersion) = @_;
     if(my $ClassId = $SInfo->{"Class"})
     {
         if($TypeInfo{$LibVersion}{$ClassId}{"Spec"})
@@ -12605,6 +12398,7 @@ sub isTemplateSpec($$$)
 sub symbolFilter($$$$)
 { # some special cases when the symbol cannot be imported
     my ($Symbol, $LibVersion, $Type, $Level) = @_;
+    
     if(isPrivateData($Symbol))
     { # non-public global data
         return 0;
@@ -12615,9 +12409,13 @@ sub symbolFilter($$$$)
         return 0 if($Symbol=~/($SkipInternal)/);
     }
     
-    if($CheckObjectsOnly) {
-        return 0 if($Symbol=~/\A(_init|_fini)\Z/);
+    if($Symbol=~/\A_Z/)
+    {
+        if($Symbol=~/[CD][3-4]E/) {
+            return 0;
+        }
     }
+    
     if($CheckHeadersOnly and not checkDump($LibVersion, "2.7"))
     { # support for old ABI dumps in --headers-only mode
         foreach my $Pos (keys(%{$CompleteSignature{$LibVersion}{$Symbol}{"Param"}}))
@@ -12633,11 +12431,29 @@ sub symbolFilter($$$$)
     }
     if($Type=~/Affected/)
     {
-        my $ClassId = $CompleteSignature{$LibVersion}{$Symbol}{"Class"};
+        my $Header = $CompleteSignature{$LibVersion}{$Symbol}{"Header"};
+        
         if($SkipSymbols{$LibVersion}{$Symbol})
         { # user defined symbols to ignore
             return 0;
         }
+        
+        if($SymbolsListPath and not $SymbolsList{$Symbol})
+        { # user defined symbols
+            if(not $TargetHeadersPath or not $Header
+            or not is_target_header($Header, 1))
+            { # -symbols-list | -headers-list
+                return 0;
+            }
+        }
+        
+        if($AppPath and not $SymbolsList_App{$Symbol})
+        { # user defined symbols (in application)
+            return 0;
+        }
+        
+        my $ClassId = $CompleteSignature{$LibVersion}{$Symbol}{"Class"};
+        
         my $NameSpace = $CompleteSignature{$LibVersion}{$Symbol}{"NameSpace"};
         if(not $NameSpace and $ClassId)
         { # class methods have no "NameSpace" attribute
@@ -12655,7 +12471,7 @@ sub symbolFilter($$$$)
                 }
             }
         }
-        if(my $Header = $CompleteSignature{$LibVersion}{$Symbol}{"Header"})
+        if($Header)
         {
             if(my $Skip = skipHeader($Header, $LibVersion))
             { # --skip-headers or <skip_headers> (not <skip_including>)
@@ -12664,180 +12480,75 @@ sub symbolFilter($$$$)
                 }
             }
         }
-        if($SymbolsListPath and not $SymbolsList{$Symbol})
-        { # user defined symbols
-            return 0;
+        if($TypesListPath and $ClassId)
+        { # user defined types
+            my $CName = $TypeInfo{$LibVersion}{$ClassId}{"Name"};
+            
+            if(not $TypesList{$CName})
+            {
+                if(my $NS = $TypeInfo{$LibVersion}{$ClassId}{"NameSpace"})
+                {
+                    $CName=~s/\A\Q$NS\E\:\://g;
+                }
+                
+                if(not $TypesList{$CName})
+                {
+                    my $Found = 0;
+                    
+                    while($CName=~s/\:\:.+?\Z//)
+                    {
+                        if($TypesList{$CName})
+                        {
+                            $Found = 1;
+                            last;
+                        }
+                    }
+                    
+                    if(not $Found) {
+                        return 0;
+                    }
+                }
+            }
         }
-        if($SkipSymbolsListPath and $SkipSymbolsList{$Symbol})
-        { # user defined symbols
-            return 0;
-        }
-        if($AppPath and not $SymbolsList_App{$Symbol})
-        { # user defined symbols (in application)
-            return 0;
-        }
+        
         if(not selectSymbol($Symbol, $CompleteSignature{$LibVersion}{$Symbol}, $Level, $LibVersion))
         { # non-target symbols
             return 0;
         }
         if($Level eq "Binary")
         {
-            if($CheckObjectsOnly)
+            if($CompleteSignature{$LibVersion}{$Symbol}{"InLine"}
+            or isInLineInst($CompleteSignature{$LibVersion}{$Symbol}, $LibVersion))
             {
-                if(isTemplateInstance($Symbol, $CompleteSignature{$LibVersion}{$Symbol}, $LibVersion)) {
-                    return 0;
-                }
-            }
-            else
-            {
-                if($CompleteSignature{$LibVersion}{$Symbol}{"InLine"}
-                or isInLineInst($Symbol, $CompleteSignature{$LibVersion}{$Symbol}, $LibVersion))
-                {
-                    if($ClassId and $CompleteSignature{$LibVersion}{$Symbol}{"Virt"})
-                    { # inline virtual methods
-                        if($Type=~/InlineVirt/) {
-                            return 1;
-                        }
-                        my $Allocable = (not isCopyingClass($ClassId, $LibVersion));
-                        if(not $Allocable)
-                        { # check bases
-                            foreach my $DCId (get_sub_classes($ClassId, $LibVersion, 1))
-                            {
-                                if(not isCopyingClass($DCId, $LibVersion))
-                                { # exists a derived class without default c-tor
-                                    $Allocable=1;
-                                    last;
-                                }
+                if($ClassId and $CompleteSignature{$LibVersion}{$Symbol}{"Virt"})
+                { # inline virtual methods
+                    if($Type=~/InlineVirt/) {
+                        return 1;
+                    }
+                    my $Allocable = (not isCopyingClass($ClassId, $LibVersion));
+                    if(not $Allocable)
+                    { # check bases
+                        foreach my $DCId (get_sub_classes($ClassId, $LibVersion, 1))
+                        {
+                            if(not isCopyingClass($DCId, $LibVersion))
+                            { # exists a derived class without default c-tor
+                                $Allocable=1;
+                                last;
                             }
                         }
-                        if(not $Allocable) {
-                            return 0;
-                        }
                     }
-                    else
-                    { # inline non-virtual methods
+                    if(not $Allocable) {
                         return 0;
                     }
+                }
+                else
+                { # inline non-virtual methods
+                    return 0;
                 }
             }
         }
     }
     return 1;
-}
-
-sub mergeImpl()
-{
-    my $DiffCmd = get_CmdPath("diff");
-    if(not $DiffCmd) {
-        exitStatus("Not_Found", "can't find \"diff\"");
-    }
-    foreach my $Interface (sort keys(%{$Symbol_Library{1}}))
-    { # implementation changes
-        next if($CompleteSignature{1}{$Interface}{"Private"});
-        next if(not $CompleteSignature{1}{$Interface}{"Header"} and not $CheckObjectsOnly);
-        next if(not $Symbol_Library{2}{$Interface} and not $Symbol_Library{2}{$SymVer{2}{$Interface}});
-        if(not symbolFilter($Interface, 1, "Affected", "Binary")) {
-            next;
-        }
-        my $Impl1 = canonifyImpl($Interface_Impl{1}{$Interface});
-        next if(not $Impl1);
-        my $Impl2 = canonifyImpl($Interface_Impl{2}{$Interface});
-        next if(not $Impl2);
-        if($Impl1 ne $Impl2)
-        {
-            writeFile("$TMP_DIR/impl1", $Impl1);
-            writeFile("$TMP_DIR/impl2", $Impl2);
-            my $Diff = `$DiffCmd -rNau \"$TMP_DIR/impl1\" \"$TMP_DIR/impl2\"`;
-            $Diff=~s/(---|\+\+\+).+\n//g;
-            $Diff=~s/[ ]{3,}/ /g;
-            $Diff=~s/\n\@\@/\n \n\@\@/g;
-            unlink("$TMP_DIR/impl1");
-            unlink("$TMP_DIR/impl2");
-            %{$CompatProblems_Impl{$Interface}}=(
-                "Diff" => get_CodeView($Diff)  );
-        }
-    }
-    
-    # clean memory
-    %Interface_Impl = ();
-}
-
-sub canonifyImpl($)
-{
-    my $FuncBody=  $_[0];
-    return "" if(not $FuncBody);
-    $FuncBody=~s/0x[a-f\d]+/0x?/g;# addr
-    $FuncBody=~s/((\A|\n)[a-z]+[\t ]+)[a-f\d]+([^x]|\Z)/$1?$3/g;# call, jump
-    $FuncBody=~s/# [a-f\d]+ /# ? /g;# call, jump
-    $FuncBody=~s/%([a-z]+[a-f\d]*)/\%reg/g;# registers
-    while($FuncBody=~s/\nnop[ \t]*(\n|\Z)/$1/g){};# empty op
-    $FuncBody=~s/<.+?\.cpp.+?>/<name.cpp>/g;
-    $FuncBody=~s/(\A|\n)[a-f\d]+ </$1? </g;# 5e74 <_ZN...
-    $FuncBody=~s/\.L\d+/.L/g;
-    $FuncBody=~s/#(-?)\d+/#$1?/g;# r3, [r3, #120]
-    $FuncBody=~s/[\n]{2,}/\n/g;
-    return $FuncBody;
-}
-
-sub get_CodeView($)
-{
-    my $Code = $_[0];
-    my $View = "";
-    foreach my $Line (split(/\n/, $Code))
-    {
-        if($Line=~s/\A(\+|-)/$1 /g)
-        { # bold line
-            $View .= "<tr><td><b>".htmlSpecChars($Line)."</b></td></tr>\n";
-        }
-        else {
-            $View .= "<tr><td>".htmlSpecChars($Line)."</td></tr>\n";
-        }
-    }
-    return "<table class='code_view'>$View</table>\n";
-}
-
-sub getImplementations($$)
-{
-    my ($LibVersion, $Path) = @_;
-    return if(not $LibVersion or not -e $Path);
-    if($OSgroup eq "macos")
-    {
-        my $OtoolCmd = get_CmdPath("otool");
-        if(not $OtoolCmd) {
-            exitStatus("Not_Found", "can't find \"otool\"");
-        }
-        my $CurInterface = "";
-        foreach my $Line (split(/\n/, `$OtoolCmd -tv \"$Path\" 2>\"$TMP_DIR/null\"`))
-        {
-            if($Line=~/\A\s*_(\w+)\s*:/i) {
-                $CurInterface = $1;
-            }
-            elsif($Line=~/\A\s*[\da-z]+\s+(.+?)\Z/i) {
-                $Interface_Impl{$LibVersion}{$CurInterface} .= $1."\n";
-            }
-        }
-    }
-    else
-    {
-        my $ObjdumpCmd = get_CmdPath("objdump");
-        if(not $ObjdumpCmd) {
-            exitStatus("Not_Found", "can't find \"objdump\"");
-        }
-        my $CurInterface = "";
-        foreach my $Line (split(/\n/, `$ObjdumpCmd -d \"$Path\" 2>\"$TMP_DIR/null\"`))
-        {
-            if($Line=~/\A[\da-z]+\s+<(\w+)>/i) {
-                $CurInterface = $1;
-            }
-            else
-            { # x86:    51fa:(\t)89 e5               (\t)mov    %esp,%ebp
-              # arm:    5020:(\t)e24cb004(\t)sub(\t)fp, ip, #4(\t); 0x4
-                if($Line=~/\A\s*[a-f\d]+:\s+([a-f\d]+\s+)+([a-z]+\s+.*?)\s*(;.*|)\Z/i) {
-                    $Interface_Impl{$LibVersion}{$CurInterface} .= $2."\n";
-                }
-            }
-        }
-    }
 }
 
 sub detectAdded($)
@@ -12864,9 +12575,6 @@ sub detectRemoved($)
     my $Level = $_[0];
     foreach my $Symbol (keys(%{$Symbol_Library{1}}))
     {
-        if($CheckObjectsOnly) {
-            $CheckedSymbols{"Binary"}{$Symbol} = 1;
-        }
         if(link_symbol($Symbol, 2, "+Deps"))
         { # linker can find an old symbol
           # in the new-version library
@@ -12886,14 +12594,14 @@ sub mergeLibs($)
     foreach my $Symbol (sort keys(%{$AddedInt{$Level}}))
     { # checking added symbols
         next if($CompleteSignature{2}{$Symbol}{"Private"});
-        next if(not $CompleteSignature{2}{$Symbol}{"Header"} and not $CheckObjectsOnly);
+        next if(not $CompleteSignature{2}{$Symbol}{"Header"});
         next if(not symbolFilter($Symbol, 2, "Affected + InlineVirt", $Level));
         %{$CompatProblems{$Level}{$Symbol}{"Added_Symbol"}{""}}=();
     }
     foreach my $Symbol (sort keys(%{$RemovedInt{$Level}}))
     { # checking removed symbols
         next if($CompleteSignature{1}{$Symbol}{"Private"});
-        next if(not $CompleteSignature{1}{$Symbol}{"Header"} and not $CheckObjectsOnly);
+        next if(not $CompleteSignature{1}{$Symbol}{"Header"});
         if(index($Symbol, "_ZTV")==0)
         { # skip v-tables for templates, that should not be imported by applications
             next if($tr_name{$Symbol}=~/</);
@@ -13348,7 +13056,7 @@ sub mergeSymbols($)
             }
         }
         if($Level eq "Binary"
-        and $OSgroup eq "windows")
+        and $OStarget eq "windows")
         { # register the reason of symbol name change
             if(my $NewSym = $mangled_name{2}{$tr_name{$Symbol}})
             {
@@ -14297,8 +14005,12 @@ sub mergeParameters($$$$$$)
     
     my %Type1 = get_Type($PType1_Id, 1);
     my %Type2 = get_Type($PType2_Id, 2);
+    
+    my %PureType1 = get_PureType($PType1_Id, $TypeInfo{1});
+    
     my %BaseType1 = get_BaseType($PType1_Id, 1);
     my %BaseType2 = get_BaseType($PType2_Id, 2);
+    
     my $Parameter_Location = ($PName1)?$PName1:showPos($ParamPos1)." Parameter";
     
     if($Level eq "Binary")
@@ -14388,7 +14100,7 @@ sub mergeParameters($$$$$$)
         { # support for old ABI dumps
             if(defined $Value_Old and defined $Value_New)
             {
-                if($Type1{"Name"} eq "bool"
+                if($PureType1{"Name"} eq "bool"
                 and $Value_Old eq "false" and $Value_New eq "0")
                 { # int class::method ( bool p = 0 );
                   # old ABI dumps: "false"
@@ -14610,7 +14322,7 @@ sub mergeParameters($$$$$$)
             my $NewProblemType = $SubProblemType;
             if($SubProblemType eq "DataType_Size")
             {
-                if($Type1{"Type"}!~/\A(Pointer|Ref)\Z/ and $SubLocation!~/\-\>/)
+                if($PureType1{"Type"}!~/\A(Pointer|Ref)\Z/ and $SubLocation!~/\-\>/)
                 { # stack has been affected
                     $NewProblemType = "DataType_Size_And_Stack";
                 }
@@ -15020,11 +14732,6 @@ sub tNameLock($$)
     
     if($Changed)
     { # different formats
-        if($UseOldDumps)
-        { # old dumps
-            return 0;
-        }
-        
         my %Base1 = get_Type($Tid1, 1);
         while(defined $Base1{"Type"} and $Base1{"Type"} eq "Typedef") {
             %Base1 = get_OneStep_BaseType($Base1{"Tid"}, $TypeInfo{1});
@@ -15239,9 +14946,6 @@ sub highLight_Signature_PPos_Italic($$$$$)
 {
     my ($FullSignature, $Param_Pos, $ItalicParams, $ColorParams, $ShowReturn) = @_;
     $Param_Pos = "" if(not defined $Param_Pos);
-    if($CheckObjectsOnly) {
-        $ItalicParams=$ColorParams=0;
-    }
     my ($Signature, $VersionSpec, $SymbolVersion) = separate_symbol($FullSignature);
     my $Return = "";
     if($ShowRetVal and $Signature=~s/([^:]):([^:].+?)\Z/$1/g) {
@@ -15590,9 +15294,10 @@ sub getArch($)
     return getArch_GCC($LibVersion);
 }
 
-sub get_Report_Header($)
+sub get_Report_Title($)
 {
     my $Level = $_[0];
+    
     my $ArchInfo = " on <span style='color:Blue;'>".showArch(getArch(1))."</span>";
     if(getArch(1) ne getArch(2)
     or getArch(1) eq "unknown"
@@ -15600,60 +15305,105 @@ sub get_Report_Header($)
     { # don't show architecture in the header
         $ArchInfo="";
     }
-    my $Report_Header = "<h1><span class='nowrap'>";
+    my $Title = "";
     if($Level eq "Source") {
-        $Report_Header .= "Source compatibility";
+        $Title .= "Source compatibility";
     }
     elsif($Level eq "Binary") {
-        $Report_Header .= "Binary compatibility";
+        $Title .= "Binary compatibility";
     }
     else {
-        $Report_Header .= "API compatibility";
+        $Title .= "API compatibility";
     }
-    $Report_Header .= " report for the <span style='color:Blue;'>$TargetLibraryFName</span> $TargetComponent</span>";
-    $Report_Header .= " <span class='nowrap'>&#160;between <span style='color:Red;'>".$Descriptor{1}{"Version"}."</span> and <span style='color:Red;'>".$Descriptor{2}{"Version"}."</span> versions$ArchInfo</span>";
+    
+    if($UsedDump{1}{"DWARF"} and $UsedDump{2}{"DWARF"})
+    {
+        my $M1 = $UsedDump{1}{"M"};
+        my $M2 = $UsedDump{2}{"M"};
+        
+        if($M1 eq $M2)
+        {
+            $Title .= " report for the <span style='color:Blue;'>$M1</span> object";
+            $Title .= " between <span style='color:Red;'>".$Descriptor{1}{"Version"}."</span> and <span style='color:Red;'>".$Descriptor{2}{"Version"}."</span> versions";
+        }
+        else
+        {
+            $Title .= " report between <span style='color:Blue;'>$M1</span> (<span style='color:Red;'>".$Descriptor{1}{"Version"}."</span>)";
+            $Title .= " and <span style='color:Blue;'>$M2</span> (<span style='color:Red;'>".$Descriptor{2}{"Version"}."</span>) objects";
+        }
+    }
+    else
+    {
+        $Title .= " report for the <span style='color:Blue;'>$TargetTitle</span> $TargetComponent";
+        $Title .= " between <span style='color:Red;'>".$Descriptor{1}{"Version"}."</span> and <span style='color:Red;'>".$Descriptor{2}{"Version"}."</span> versions";
+    }
+    
+    $Title .= $ArchInfo;
+    
     if($AppPath) {
-        $Report_Header .= " <span class='nowrap'>&#160;(relating to the portability of application <span style='color:Blue;'>".get_filename($AppPath)."</span>)</span>";
+        $Title .= " (relating to the portability of application <span style='color:Blue;'>".get_filename($AppPath)."</span>)";
     }
-    $Report_Header .= "</h1>\n";
-    return $Report_Header;
+    $Title = "<h1>".$Title."</h1>\n";
+    return $Title;
+}
+
+sub get_CheckedHeaders($)
+{
+    my $LibVersion = $_[0];
+    
+    my @Headers = ();
+    
+    foreach my $Path (keys(%{$Registered_Headers{$LibVersion}}))
+    {
+        my $File = get_filename($Path);
+        if(not is_target_header($File, $LibVersion)) {
+            next;
+        }
+        
+        if(skipHeader($File, $LibVersion)) {
+            next;
+        }
+        
+        push(@Headers, $Path);
+    }
+    
+    return @Headers;
 }
 
 sub get_SourceInfo()
 {
     my ($CheckedHeaders, $CheckedSources, $CheckedLibs) = ("", "");
-    if(not $CheckObjectsOnly)
+    
+    if(my @Headers = get_CheckedHeaders(1))
     {
-        if(my @Headers = keys(%{$Registered_Headers{1}}))
+        $CheckedHeaders = "<a name='Headers'></a><h2>Header Files (".($#Headers+1).")</h2><hr/>\n";
+        $CheckedHeaders .= "<div class='h_list'>\n";
+        foreach my $Header_Path (sort {lc($Registered_Headers{1}{$a}{"Identity"}) cmp lc($Registered_Headers{1}{$b}{"Identity"})} @Headers)
         {
-            $CheckedHeaders = "<a name='Headers'></a><h2>Header Files (".($#Headers+1).")</h2><hr/>\n";
-            $CheckedHeaders .= "<div class='h_list'>\n";
-            foreach my $Header_Path (sort {lc($Registered_Headers{1}{$a}{"Identity"}) cmp lc($Registered_Headers{1}{$b}{"Identity"})} @Headers)
-            {
-                my $Identity = $Registered_Headers{1}{$Header_Path}{"Identity"};
-                my $Name = get_filename($Identity);
-                my $Comment = ($Identity=~/[\/\\]/)?" ($Identity)":"";
-                $CheckedHeaders .= $Name.$Comment."<br/>\n";
-            }
-            $CheckedHeaders .= "</div>\n";
-            $CheckedHeaders .= "<br/>$TOP_REF<br/>\n";
+            my $Identity = $Registered_Headers{1}{$Header_Path}{"Identity"};
+            my $Name = get_filename($Identity);
+            my $Comment = ($Identity=~/[\/\\]/)?" ($Identity)":"";
+            $CheckedHeaders .= $Name.$Comment."<br/>\n";
         }
-        
-        if(my @Sources = keys(%{$Registered_Sources{1}}))
-        {
-            $CheckedSources = "<a name='Sources'></a><h2>Source Files (".($#Sources+1).")</h2><hr/>\n";
-            $CheckedSources .= "<div class='h_list'>\n";
-            foreach my $Header_Path (sort {lc($Registered_Sources{1}{$a}{"Identity"}) cmp lc($Registered_Sources{1}{$b}{"Identity"})} @Sources)
-            {
-                my $Identity = $Registered_Sources{1}{$Header_Path}{"Identity"};
-                my $Name = get_filename($Identity);
-                my $Comment = ($Identity=~/[\/\\]/)?" ($Identity)":"";
-                $CheckedSources .= $Name.$Comment."<br/>\n";
-            }
-            $CheckedSources .= "</div>\n";
-            $CheckedSources .= "<br/>$TOP_REF<br/>\n";
-        }
+        $CheckedHeaders .= "</div>\n";
+        $CheckedHeaders .= "<br/>$TOP_REF<br/>\n";
     }
+    
+    if(my @Sources = keys(%{$Registered_Sources{1}}))
+    {
+        $CheckedSources = "<a name='Sources'></a><h2>Source Files (".($#Sources+1).")</h2><hr/>\n";
+        $CheckedSources .= "<div class='h_list'>\n";
+        foreach my $Header_Path (sort {lc($Registered_Sources{1}{$a}{"Identity"}) cmp lc($Registered_Sources{1}{$b}{"Identity"})} @Sources)
+        {
+            my $Identity = $Registered_Sources{1}{$Header_Path}{"Identity"};
+            my $Name = get_filename($Identity);
+            my $Comment = ($Identity=~/[\/\\]/)?" ($Identity)":"";
+            $CheckedSources .= $Name.$Comment."<br/>\n";
+        }
+        $CheckedSources .= "</div>\n";
+        $CheckedSources .= "<br/>$TOP_REF<br/>\n";
+    }
+    
     if(not $CheckHeadersOnly)
     {
         $CheckedLibs = "<a name='Libs'></a><h2>".get_ObjTitle()." (".keys(%{$Library_Symbol{1}}).")</h2><hr/>\n";
@@ -15666,6 +15416,7 @@ sub get_SourceInfo()
         $CheckedLibs .= "</div>\n";
         $CheckedLibs .= "<br/>$TOP_REF<br/>\n";
     }
+    
     return $CheckedHeaders.$CheckedSources.$CheckedLibs;
 }
 
@@ -15848,33 +15599,28 @@ sub get_Summary($)
     
     %TypeChanges = (); # free memory
     
-    if($CheckObjectsOnly)
-    { # only removed exported symbols
-        $RESULT{$Level}{"Affected"} = $Removed*100/keys(%{$Symbol_Library{1}});
+    # changed and removed public symbols
+    my $SCount = keys(%{$CheckedSymbols{$Level}});
+    if($ExtendedCheck)
+    { # don't count external_func_0 for constants
+        $SCount-=1;
     }
-    else
-    { # changed and removed public symbols
-        my $SCount = keys(%{$CheckedSymbols{$Level}});
-        if($ExtendedCheck)
-        { # don't count external_func_0 for constants
-            $SCount-=1;
+    if($SCount)
+    {
+        my %Weight = (
+            "High" => 100,
+            "Medium" => 50,
+            "Low" => 25
+        );
+        foreach (keys(%{$TotalAffected{$Level}})) {
+            $RESULT{$Level}{"Affected"}+=$Weight{$TotalAffected{$Level}{$_}};
         }
-        if($SCount)
-        {
-            my %Weight = (
-                "High" => 100,
-                "Medium" => 50,
-                "Low" => 25
-            );
-            foreach (keys(%{$TotalAffected{$Level}})) {
-                $RESULT{$Level}{"Affected"}+=$Weight{$TotalAffected{$Level}{$_}};
-            }
-            $RESULT{$Level}{"Affected"} = $RESULT{$Level}{"Affected"}/$SCount;
-        }
-        else {
-            $RESULT{$Level}{"Affected"} = 0;
-        }
+        $RESULT{$Level}{"Affected"} = $RESULT{$Level}{"Affected"}/$SCount;
     }
+    else {
+        $RESULT{$Level}{"Affected"} = 0;
+    }
+    
     $RESULT{$Level}{"Affected"} = show_number($RESULT{$Level}{"Affected"});
     if($RESULT{$Level}{"Affected"}>=100) {
         $RESULT{$Level}{"Affected"} = 100;
@@ -15913,15 +15659,6 @@ sub get_Summary($)
         }
         else {
             $RESULT{$Level}{"Warnings"} += $C_Problems_Low;
-        }
-    }
-    if($CheckImpl and $Level eq "Binary")
-    {
-        if($StrictCompat) {
-            $RESULT{$Level}{"Problems"} += keys(%CompatProblems_Impl);
-        }
-        else {
-            $RESULT{$Level}{"Warnings"} += keys(%CompatProblems_Impl);
         }
     }
     if($RESULT{$Level}{"Problems"}
@@ -16021,12 +15758,7 @@ sub get_Summary($)
         $Problem_Summary .= "  <problems_with_constants>\n";
         $Problem_Summary .= "    <low>$C_Problems_Low</low>\n";
         $Problem_Summary .= "  </problems_with_constants>\n";
-        if($CheckImpl and $Level eq "Binary")
-        {
-            $Problem_Summary .= "  <impl>\n";
-            $Problem_Summary .= "    <low>".keys(%CompatProblems_Impl)."</low>\n";
-            $Problem_Summary .= "  </impl>\n";
-        }
+        
         $Problem_Summary = "<problem_summary>\n".$Problem_Summary."</problem_summary>\n\n";
         
         return ($TestInfo.$TestResults.$Problem_Summary, "");
@@ -16036,7 +15768,7 @@ sub get_Summary($)
         # test info
         $TestInfo = "<h2>Test Info</h2><hr/>\n";
         $TestInfo .= "<table class='summary'>\n";
-        $TestInfo .= "<tr><th>".ucfirst($TargetComponent)." Name</th><td>$TargetLibraryFName</td></tr>\n";
+        $TestInfo .= "<tr><th>".ucfirst($TargetComponent)." Name</th><td>$TargetTitle</td></tr>\n";
         
         my (@VInf1, @VInf2, $AddTestInfo) = ();
         if($Arch1 ne "unknown"
@@ -16091,13 +15823,10 @@ sub get_Summary($)
         $TestResults = "<h2>Test Results</h2><hr/>\n";
         $TestResults .= "<table class='summary'>";
         
-        if(my @Headers = keys(%{$Registered_Headers{1}}))
+        if(my @Headers = get_CheckedHeaders(1))
         {
             my $Headers_Link = "<a href='#Headers' style='color:Blue;'>".($#Headers + 1)."</a>";
             $TestResults .= "<tr><th>Total Header Files</th><td>".$Headers_Link."</td></tr>\n";
-        }
-        elsif($CheckObjectsOnly) {
-            $TestResults .= "<tr><th>Total Header Files</th><td>0&#160;(not&#160;analyzed)</td></tr>\n";
         }
         
         if(my @Sources = keys(%{$Registered_Sources{1}}))
@@ -16164,39 +15893,33 @@ sub get_Summary($)
         
         my $TH_Link = "0";
         $TH_Link = "<a href='#".get_Anchor("Type", $Level, "High")."' style='color:Blue;'>$T_Problems_High</a>" if($T_Problems_High>0);
-        $TH_Link = "n/a" if($CheckObjectsOnly);
         $META_DATA .= "type_problems_high:$T_Problems_High;";
         $Problem_Summary .= "<tr><th rowspan='3'>Problems with<br/>Data Types</th>";
         $Problem_Summary .= "<td>High</td><td".getStyle("T", "H", $T_Problems_High).">$TH_Link</td></tr>\n";
         
         my $TM_Link = "0";
         $TM_Link = "<a href='#".get_Anchor("Type", $Level, "Medium")."' style='color:Blue;'>$T_Problems_Medium</a>" if($T_Problems_Medium>0);
-        $TM_Link = "n/a" if($CheckObjectsOnly);
         $META_DATA .= "type_problems_medium:$T_Problems_Medium;";
         $Problem_Summary .= "<tr><td>Medium</td><td".getStyle("T", "M", $T_Problems_Medium).">$TM_Link</td></tr>\n";
         
         my $TL_Link = "0";
         $TL_Link = "<a href='#".get_Anchor("Type", $Level, "Low")."' style='color:Blue;'>$T_Problems_Low</a>" if($T_Problems_Low>0);
-        $TL_Link = "n/a" if($CheckObjectsOnly);
         $META_DATA .= "type_problems_low:$T_Problems_Low;";
         $Problem_Summary .= "<tr><td>Low</td><td".getStyle("T", "L", $T_Problems_Low).">$TL_Link</td></tr>\n";
         
         my $IH_Link = "0";
         $IH_Link = "<a href='#".get_Anchor("Symbol", $Level, "High")."' style='color:Blue;'>$I_Problems_High</a>" if($I_Problems_High>0);
-        $IH_Link = "n/a" if($CheckObjectsOnly);
         $META_DATA .= "interface_problems_high:$I_Problems_High;";
         $Problem_Summary .= "<tr><th rowspan='3'>Problems with<br/>Symbols</th>";
         $Problem_Summary .= "<td>High</td><td".getStyle("I", "H", $I_Problems_High).">$IH_Link</td></tr>\n";
         
         my $IM_Link = "0";
         $IM_Link = "<a href='#".get_Anchor("Symbol", $Level, "Medium")."' style='color:Blue;'>$I_Problems_Medium</a>" if($I_Problems_Medium>0);
-        $IM_Link = "n/a" if($CheckObjectsOnly);
         $META_DATA .= "interface_problems_medium:$I_Problems_Medium;";
         $Problem_Summary .= "<tr><td>Medium</td><td".getStyle("I", "M", $I_Problems_Medium).">$IM_Link</td></tr>\n";
         
         my $IL_Link = "0";
         $IL_Link = "<a href='#".get_Anchor("Symbol", $Level, "Low")."' style='color:Blue;'>$I_Problems_Low</a>" if($I_Problems_Low>0);
-        $IL_Link = "n/a" if($CheckObjectsOnly);
         $META_DATA .= "interface_problems_low:$I_Problems_Low;";
         $Problem_Summary .= "<tr><td>Low</td><td".getStyle("I", "L", $I_Problems_Low).">$IL_Link</td></tr>\n";
         
@@ -16204,32 +15927,23 @@ sub get_Summary($)
         if(keys(%{$CheckedSymbols{$Level}}) and $C_Problems_Low) {
             $ChangedConstants_Link = "<a href='#".get_Anchor("Constant", $Level, "Low")."' style='color:Blue;'>$C_Problems_Low</a>";
         }
-        $ChangedConstants_Link = "n/a" if($CheckObjectsOnly);
         $META_DATA .= "changed_constants:$C_Problems_Low;";
         $Problem_Summary .= "<tr><th>Problems with<br/>Constants</th><td>Low</td><td".getStyle("C", "L", $C_Problems_Low).">$ChangedConstants_Link</td></tr>\n";
         
-        if($CheckImpl and $Level eq "Binary")
-        {
-            my $ChangedImpl_Link = "0";
-            $ChangedImpl_Link = "<a href='#Changed_Implementation' style='color:Blue;'>".keys(%CompatProblems_Impl)."</a>" if(keys(%CompatProblems_Impl)>0);
-            $ChangedImpl_Link = "n/a" if($CheckHeadersOnly);
-            $META_DATA .= "changed_implementation:".keys(%CompatProblems_Impl).";";
-            $Problem_Summary .= "<tr><th>Problems with<br/>Implementation</th><td>Low</td><td".getStyle("Imp", "L", int(keys(%CompatProblems_Impl))).">$ChangedImpl_Link</td></tr>\n";
-        }
         # Safe Changes
-        if($T_Other and not $CheckObjectsOnly)
+        if($T_Other)
         {
             my $TS_Link = "<a href='#".get_Anchor("Type", $Level, "Safe")."' style='color:Blue;'>$T_Other</a>";
             $Problem_Summary .= "<tr><th>Other Changes<br/>in Data Types</th><td>-</td><td".getStyle("T", "S", $T_Other).">$TS_Link</td></tr>\n";
         }
         
-        if($I_Other and not $CheckObjectsOnly)
+        if($I_Other)
         {
             my $IS_Link = "<a href='#".get_Anchor("Symbol", $Level, "Safe")."' style='color:Blue;'>$I_Other</a>";
             $Problem_Summary .= "<tr><th>Other Changes<br/>in Symbols</th><td>-</td><td".getStyle("I", "S", $I_Other).">$IS_Link</td></tr>\n";
         }
         
-        if($C_Other and not $CheckObjectsOnly)
+        if($C_Other)
         {
             my $CS_Link = "<a href='#".get_Anchor("Constant", $Level, "Safe")."' style='color:Blue;'>$C_Other</a>";
             $Problem_Summary .= "<tr><th>Other Changes<br/>in Constants</th><td>-</td><td".getStyle("C", "S", $C_Other).">$CS_Link</td></tr>\n";
@@ -16400,54 +16114,6 @@ sub get_Report_ChangedConstants($$)
         }
     }
     return $CHANGED_CONSTANTS;
-}
-
-sub get_Report_Impl()
-{
-    my $CHANGED_IMPLEMENTATION = "";
-    my %ReportMap = ();
-    foreach my $Interface (sort keys(%CompatProblems_Impl))
-    {
-        my $HeaderName = $CompleteSignature{1}{$Interface}{"Header"};
-        my $DyLib = $Symbol_Library{1}{$Interface};
-        $ReportMap{$HeaderName}{$DyLib}{$Interface} = 1;
-    }
-    my $Changed_Number = 0;
-    foreach my $HeaderName (sort {lc($a) cmp lc($b)} keys(%ReportMap))
-    {
-        foreach my $DyLib (sort {lc($a) cmp lc($b)} keys(%{$ReportMap{$HeaderName}}))
-        {
-            my %NameSpaceSymbols = ();
-            foreach my $Interface (keys(%{$ReportMap{$HeaderName}{$DyLib}})) {
-                $NameSpaceSymbols{select_Symbol_NS($Interface, 2)}{$Interface} = 1;
-            }
-            foreach my $NameSpace (sort keys(%NameSpaceSymbols))
-            {
-                $CHANGED_IMPLEMENTATION .= getTitle($HeaderName, $DyLib, $NameSpace);
-                my @SortedInterfaces = sort {lc(get_Signature($a, 1)) cmp lc(get_Signature($b, 1))} keys(%{$NameSpaceSymbols{$NameSpace}});
-                foreach my $Interface (@SortedInterfaces)
-                {
-                    $Changed_Number += 1;
-                    my $Signature = get_Signature($Interface, 1);
-                    if($NameSpace) {
-                        $Signature=~s/\b\Q$NameSpace\E::\b//g;
-                    }
-                    $CHANGED_IMPLEMENTATION .= $ContentSpanStart.highLight_Signature_Italic_Color($Signature).$ContentSpanEnd."<br/>\n".$ContentDivStart."<span class='mangled'>[symbol: <b>$Interface</b>]</span>".$CompatProblems_Impl{$Interface}{"Diff"}."<br/><br/>".$ContentDivEnd."\n";
-                }
-                $CHANGED_IMPLEMENTATION .= "<br/>\n";
-            }
-        }
-    }
-    if($CHANGED_IMPLEMENTATION)
-    {
-        $CHANGED_IMPLEMENTATION = insertIDs($CHANGED_IMPLEMENTATION);
-        $CHANGED_IMPLEMENTATION = "<a name='Changed_Implementation'></a><h2>Problems with Implementation ($Changed_Number)</h2><hr/>\n".$CHANGED_IMPLEMENTATION.$TOP_REF."<br/>\n";
-    }
-    
-    # clean memory
-    %CompatProblems_Impl = ();
-    
-    return $CHANGED_IMPLEMENTATION;
 }
 
 sub getTitle($$$)
@@ -16742,10 +16408,17 @@ sub applyMacroses($$$$)
         or $Value eq "") {
             next;
         }
-        if($Value=~/\s\(/ and $Value!~/['"]/)
+        
+        if(index($Content, $Macro)==-1) {
+            next;
+        }
+        
+        if($Kind!~/\A(Changed|Added|Removed)_Constant\Z/
+        and $Kind!~/_Type_/
+        and $Value=~/\s\(/ and $Value!~/['"]/)
         { # functions
             $Value=~s/\s*\[[\w\-]+\]//g; # remove quals
-            $Value=~s/\s\w+(\)|,)/$1/g; # remove parameter names
+            $Value=~s/\s[a-z]\w*(\)|,)/$1/ig; # remove parameter names
             $Value = black_name($Value);
         }
         elsif($Value=~/\s/) {
@@ -16896,13 +16569,13 @@ sub get_Report_SymbolProblems($$)
                 foreach my $NameSpace (sort keys(%NameSpaceSymbols))
                 {
                     $INTERFACE_PROBLEMS .= getTitle($HeaderName, $DyLib, $NameSpace);
-                    my @SortedInterfaces = sort {lc($tr_name{$a}?$tr_name{$a}:$a) cmp lc($tr_name{$b}?$tr_name{$b}:$b)} keys(%{$NameSpaceSymbols{$NameSpace}});
+                    my @SortedInterfaces = sort {lc($tr_name{$a}?$tr_name{$a}:$a) cmp lc($tr_name{$b}?$tr_name{$b}:$b)} sort keys(%{$NameSpaceSymbols{$NameSpace}});
                     foreach my $Symbol (@SortedInterfaces)
                     {
                         my $Signature = get_Signature($Symbol, 1);
                         my $SYMBOL_REPORT = "";
                         my $ProblemNum = 1;
-                        foreach my $Kind (keys(%{$SymbolChanges{$Symbol}}))
+                        foreach my $Kind (sort keys(%{$SymbolChanges{$Symbol}}))
                         {
                             foreach my $Location (sort keys(%{$SymbolChanges{$Symbol}{$Kind}}))
                             {
@@ -17216,8 +16889,8 @@ sub showVTables($)
             else
             { # HTML
                 $VTABLES .= "<table class='vtable'>";
-                $VTABLES .= "<tr><th width='2%'>Offset</th>";
-                $VTABLES .= "<th width='45%'>Virtual Table (Old) - ".(keys(%{$Type1{"VTable"}}))." entries</th>";
+                $VTABLES .= "<tr><th>Offset</th>";
+                $VTABLES .= "<th>Virtual Table (Old) - ".(keys(%{$Type1{"VTable"}}))." entries</th>";
                 $VTABLES .= "<th>Virtual Table (New) - ".(keys(%{$Type2{"VTable"}}))." entries</th></tr>";
                 foreach my $Index (sort {int($a)<=>int($b)} (keys(%Entries)))
                 {
@@ -17254,6 +16927,8 @@ sub simpleVEntry($)
     or $VEntry eq "") {
         return "";
     }
+    
+    $VEntry=~s/ \[.+?\]\Z//; # support for ABI Dumper
     $VEntry=~s/\A(.+)::(_ZThn.+)\Z/$2/; # thunks
     $VEntry=~s/_ZTI\w+/typeinfo/g; # typeinfo
     if($VEntry=~/\A_ZThn.+\Z/) {
@@ -17315,24 +16990,17 @@ sub getParamName($)
 sub getAffectedSymbols($$$$)
 {
     my ($Level, $Target_TypeName, $Kinds_Locations, $Syms) = @_;
-    my $LIMIT = 1000;
+    my $LIMIT = 10;
     
     if(defined $AffectLimit)
     {
         $LIMIT = $AffectLimit;
     }
-    else
-    {
-        if($#{$Syms}>=1999)
-        { # reduce size of the report
-            $AffectLimit = 10;
-            
-            printMsg("WARNING", "reducing limit of affected symbols shown in the report to $AffectLimit");
-            $LIMIT = $AffectLimit;
-        }
-    }
-    my %SProblems = ();
-    LOOP: foreach my $Symbol (@{$Syms})
+    
+    my %SymSel = ();
+    my %SymLocKind = ();
+    
+    foreach my $Symbol (@{$Syms})
     {
         if(index($Symbol, "_Z")==0
         and $Symbol=~/(C2|D2|D0)[EI]/)
@@ -17340,129 +17008,125 @@ sub getAffectedSymbols($$$$)
             next;
         }
         
-        my ($MinPath_Length, $ProblemLocation_Last) = (-1, "");
-        my $Severity_Max = 0;
-        
-        foreach my $Kind (keys(%{$Kinds_Locations}))
+        foreach my $Kind (sort keys(%{$Kinds_Locations}))
         {
             if(not defined $CompatProblems{$Level}{$Symbol}
             or not defined $CompatProblems{$Level}{$Symbol}{$Kind}) {
                 next;
             }
             
-            foreach my $Location (keys(%{$Kinds_Locations->{$Kind}}))
+            foreach my $Loc (sort keys(%{$Kinds_Locations->{$Kind}}))
             {
-                if(keys(%SProblems)>$LIMIT) {
-                    last LOOP;
-                }
-                
-                if(not defined $CompatProblems{$Level}{$Symbol}{$Kind}{$Location}) {
+                if(not defined $CompatProblems{$Level}{$Symbol}{$Kind}{$Loc}) {
                     next;
                 }
                 
                 my ($SN, $SS, $SV) = separate_symbol($Symbol);
                 if($Level eq "Source")
                 { # remove symbol version
-                    $Symbol=$SN;
+                    $Symbol = $SN;
                 }
                 
                 if($SV and defined $CompatProblems{$Level}{$SN}
-                and defined $CompatProblems{$Level}{$SN}{$Kind}{$Location})
+                and defined $CompatProblems{$Level}{$SN}{$Kind}{$Loc})
                 { # duplicated problems for versioned symbols
                     next;
                 }
                 
-                my $Type_Name = $CompatProblems{$Level}{$Symbol}{$Kind}{$Location}{"Type_Name"};
+                my $Type_Name = $CompatProblems{$Level}{$Symbol}{$Kind}{$Loc}{"Type_Name"};
                 if($Type_Name ne $Target_TypeName) {
                     next;
                 }
                 
-                my $PName = getParamName($Location);
-                my $PPos = adjustParamPos(getParamPos($PName, $Symbol, 1), $Symbol, 1);
-                
-                my $Severity = $CompatRules{$Level}{$Kind}{"Severity"};
-                my $Path_Length = 0;
-                my $ProblemLocation = $Location;
-                if($Type_Name) {
-                    $ProblemLocation=~s/->\Q$Type_Name\E\Z//g;
-                }
-                while($ProblemLocation=~/\-\>/g) {
-                    $Path_Length += 1;
-                }
-                if($MinPath_Length==-1 or ($Path_Length<=$MinPath_Length and $Severity_Val{$Severity}>$Severity_Max)
-                or (cmpLocations($ProblemLocation, $ProblemLocation_Last) and $Severity_Val{$Severity}==$Severity_Max))
-                {
-                    $MinPath_Length = $Path_Length;
-                    $Severity_Max = $Severity_Val{$Severity};
-                    $ProblemLocation_Last = $ProblemLocation;
-                    %{$SProblems{$Symbol}} = (
-                        "Descr"=>getAffectDesc($Level, $Symbol, $Kind, $Location),
-                        "Severity_Max"=>$Severity_Max,
-                        "Signature"=>get_Signature($Symbol, 1),
-                        "Position"=>$PPos,
-                        "Param_Name"=>$PName,
-                        "Location"=>$Location
-                    );
-                }
+                $SymLocKind{$Symbol}{$Loc}{$Kind} = 1;
             }
         }
     }
-    my @Symbols = keys(%SProblems);
-    @Symbols = sort {lc($tr_name{$a}?$tr_name{$a}:$a) cmp lc($tr_name{$b}?$tr_name{$b}:$b)} @Symbols;
-    @Symbols = sort {$SProblems{$b}{"Severity_Max"}<=>$SProblems{$a}{"Severity_Max"}} @Symbols;
-    if($#Symbols+1>$LIMIT)
-    { # remove last element
-        pop(@Symbols); 
+    
+    foreach my $Symbol (sort keys(%SymLocKind))
+    {
+        LOOP: foreach my $Loc (sort {$a=~/retval/ cmp $b=~/retval/} sort {length($a)<=>length($b)} sort keys(%{$SymLocKind{$Symbol}}))
+        {
+            foreach my $Kind (keys(%{$SymLocKind{$Symbol}{$Loc}}))
+            {
+                $SymSel{$Symbol}{"Loc"} = $Loc;
+                $SymSel{$Symbol}{"Kind"} = $Kind;
+                
+                last LOOP;
+            }
+        }
     }
+    
     my $Affected = "";
+    my $Num = 0;
+    
     if($ReportFormat eq "xml")
     { # XML
         $Affected .= "      <affected>\n";
-        foreach my $Symbol (@Symbols)
+        
+        foreach my $Symbol (sort {lc($a) cmp lc($b)} keys(%SymSel))
         {
-            my $Param_Name = $SProblems{$Symbol}{"Param_Name"};
-            my $Description = $SProblems{$Symbol}{"Descr"};
-            my $Location = $SProblems{$Symbol}{"Location"};
+            my $Loc = $SymSel{$Symbol}{"Loc"};
+            my $PName = getParamName($Loc);
+            my $Desc = getAffectDesc($Level, $Symbol, $SymSel{$Symbol}{"Kind"}, $Loc);
+            
             my $Target = "";
-            if($Param_Name)
+            if($PName)
             {
-                $Target .= " param=\"$Param_Name\"";
-                $Description=~s/parameter $Param_Name /parameter \@param /;
+                $Target .= " param=\"$PName\"";
+                $Desc=~s/parameter $PName /parameter \@param /;
             }
-            elsif($Location=~/\Aretval(\-|\Z)/i) {
+            elsif($Loc=~/\Aretval(\-|\Z)/i) {
                 $Target .= " affected=\"retval\"";
             }
-            elsif($Location=~/\Athis(\-|\Z)/i) {
+            elsif($Loc=~/\Athis(\-|\Z)/i) {
                 $Target .= " affected=\"this\"";
             }
             
-            if($Description=~s/\AField ([^\s]+) /Field \@field /) {
+            if($Desc=~s/\AField ([^\s]+) /Field \@field /) {
                 $Target .= " field=\"$1\"";
             }
             
             $Affected .= "        <symbol name=\"$Symbol\"$Target>\n";
-            $Affected .= "          <comment>".xmlSpecChars($Description)."</comment>\n";
+            $Affected .= "          <comment>".xmlSpecChars($Desc)."</comment>\n";
             $Affected .= "        </symbol>\n";
+            
+            if($Num>$LIMIT) {
+                last LOOP;
+            }
+            
+            $Num += 1;
         }
         $Affected .= "      </affected>\n";
     }
     else
     { # HTML
-        foreach my $Symbol (@Symbols)
+        foreach my $Symbol (sort {lc($a) cmp lc($b)} keys(%SymSel))
         {
-            my $Description = $SProblems{$Symbol}{"Descr"};
-            my $Signature = $SProblems{$Symbol}{"Signature"};
-            my $Pos = $SProblems{$Symbol}{"Position"};
-            $Affected .= "<span class='iname_a'>".highLight_Signature_PPos_Italic($Signature, $Pos, 1, 0, 0)."</span><br/><div class='affect'>".htmlSpecChars($Description)."</div>\n";
+            my $Desc = getAffectDesc($Level, $Symbol, $SymSel{$Symbol}{"Kind"}, $SymSel{$Symbol}{"Loc"});
+            my $S = get_Signature($Symbol, 1);
+            my $PName = getParamName($SymSel{$Symbol}{"Loc"});
+            my $Pos = adjustParamPos(getParamPos($PName, $Symbol, 1), $Symbol, 1);
+            
+            $Affected .= "<span class='iname_a'>".highLight_Signature_PPos_Italic($S, $Pos, 1, 0, 0)."</span><br/>";
+            $Affected .= "<div class='affect'>".htmlSpecChars($Desc)."</div>\n";
+            
+            if($Num>$LIMIT) {
+                last;
+            }
+            
+            $Num += 1;
         }
-        if(keys(%SProblems)>$LIMIT) {
+        
+        if(keys(%SymSel)>$LIMIT) {
             $Affected .= " ...<br/>"; # and others ...
         }
+        
         $Affected = "<div class='affected'>".$Affected."</div>";
         if($Affected)
         {
             $Affected = $ContentDivStart.$Affected.$ContentDivEnd;
-            $Affected = $ContentSpanStart_Affected."[+] affected symbols (".(keys(%SProblems)>$LIMIT?">".$LIMIT:keys(%SProblems)).")".$ContentSpanEnd.$Affected;
+            $Affected = $ContentSpanStart_Affected."[+] affected symbols (".keys(%SymSel).")".$ContentSpanEnd.$Affected;
         }
     }
     
@@ -17602,9 +17266,10 @@ sub getAffectDesc($$$$)
     
     my $Sent = join(" ", @Sentence);
     
+    $Sent=~s/->/./g;
+    
     if($ReportFormat eq "xml")
     {
-        $Sent=~s/->/./g;
         $Sent=~s/'//g;
     }
     
@@ -17737,74 +17402,6 @@ sub writeReport($$)
         open(REPORT, ">", $RPath) || die ("can't open file \'$RPath\': $!\n");
         print REPORT $Report;
         close(REPORT);
-        
-        if($Browse or $OpenReport)
-        { # open in browser
-            openReport($RPath);
-            if($JoinReport or $DoubleReport)
-            {
-                if($Level eq "Binary")
-                { # wait to open a browser
-                    sleep(1);
-                }
-            }
-        }
-    }
-}
-
-sub openReport($)
-{
-    my $Path = $_[0];
-    my $Cmd = "";
-    if($Browse)
-    { # user-defined browser
-        $Cmd = $Browse." \"$Path\"";
-    }
-    if(not $Cmd)
-    { # default browser
-        if($OSgroup eq "macos") {
-            $Cmd = "open \"$Path\"";
-        }
-        elsif($OSgroup eq "windows") {
-            $Cmd = "start ".path_format($Path, $OSgroup);
-        }
-        else
-        { # linux, freebsd, solaris
-            my @Browsers = (
-                "x-www-browser",
-                "sensible-browser",
-                "firefox",
-                "opera",
-                "xdg-open",
-                "lynx",
-                "links"
-            );
-            foreach my $Br (@Browsers)
-            {
-                if($Br = get_CmdPath($Br))
-                {
-                    $Cmd = $Br." \"$Path\"";
-                    last;
-                }
-            }
-        }
-    }
-    if($Cmd)
-    {
-        if($Debug) {
-            printMsg("INFO", "running $Cmd");
-        }
-        if($OSgroup ne "windows"
-        and $OSgroup ne "macos")
-        {
-            if($Cmd!~/lynx|links/) {
-                $Cmd .= "  >\"/dev/null\" 2>&1 &";
-            }
-        }
-        system($Cmd);
-    }
-    else {
-        printMsg("ERROR", "cannot open report in browser");
     }
 }
 
@@ -17844,29 +17441,29 @@ sub getReport($)
         {
             $CssStyles .= "\n".readModule("Styles", "Tabs.css");
             $JScripts .= "\n".readModule("Scripts", "Tabs.js");
-            my $Title = $TargetLibraryFName.": ".$Descriptor{1}{"Version"}." to ".$Descriptor{2}{"Version"}." compatibility report";
-            my $Keywords = $TargetLibraryFName.", compatibility, API, report";
-            my $Description = "Compatibility report for the $TargetLibraryFName $TargetComponent between ".$Descriptor{1}{"Version"}." and ".$Descriptor{2}{"Version"}." versions";
+            my $Title = $TargetTitle.": ".$Descriptor{1}{"Version"}." to ".$Descriptor{2}{"Version"}." compatibility report";
+            my $Keywords = $TargetTitle.", compatibility, API, report";
+            my $Description = "Compatibility report for the $TargetTitle $TargetComponent between ".$Descriptor{1}{"Version"}." and ".$Descriptor{2}{"Version"}." versions";
             my ($BSummary, $BMetaData) = get_Summary("Binary");
             my ($SSummary, $SMetaData) = get_Summary("Source");
             my $Report = "<!-\- $BMetaData -\->\n<!-\- $SMetaData -\->\n".composeHTML_Head($Title, $Keywords, $Description, $CssStyles, $JScripts)."<body><a name='Source'></a><a name='Binary'></a><a name='Top'></a>";
-            $Report .= get_Report_Header("Join")."
+            $Report .= get_Report_Title("Join")."
             <br/><div class='tabset'>
             <a id='BinaryID' href='#BinaryTab' class='tab active'>Binary<br/>Compatibility</a>
             <a id='SourceID' href='#SourceTab' style='margin-left:3px' class='tab disabled'>Source<br/>Compatibility</a>
             </div>";
             $Report .= "<div id='BinaryTab' class='tab'>\n$BSummary\n".get_Report_Added("Binary").get_Report_Removed("Binary").get_Report_Problems("High", "Binary").get_Report_Problems("Medium", "Binary").get_Report_Problems("Low", "Binary").get_Report_Problems("Safe", "Binary").get_SourceInfo()."<br/><br/><br/></div>";
             $Report .= "<div id='SourceTab' class='tab'>\n$SSummary\n".get_Report_Added("Source").get_Report_Removed("Source").get_Report_Problems("High", "Source").get_Report_Problems("Medium", "Source").get_Report_Problems("Low", "Source").get_Report_Problems("Safe", "Source").get_SourceInfo()."<br/><br/><br/></div>";
-            $Report .= getReportFooter($TargetLibraryFName, not $JoinReport);
-            $Report .= "\n<div style='height:999px;'></div>\n</body></html>";
+            $Report .= getReportFooter("Double");
+            $Report .= "\n</body></html>\n";
             return $Report;
         }
         else
         {
             my ($Summary, $MetaData) = get_Summary($Level);
-            my $Title = $TargetLibraryFName.": ".$Descriptor{1}{"Version"}." to ".$Descriptor{2}{"Version"}." ".lc($Level)." compatibility report";
-            my $Keywords = $TargetLibraryFName.", ".lc($Level)." compatibility, API, report";
-            my $Description = "$Level compatibility report for the ".$TargetLibraryFName." ".$TargetComponent." between ".$Descriptor{1}{"Version"}." and ".$Descriptor{2}{"Version"}." versions";
+            my $Title = $TargetTitle.": ".$Descriptor{1}{"Version"}." to ".$Descriptor{2}{"Version"}." ".lc($Level)." compatibility report";
+            my $Keywords = $TargetTitle.", ".lc($Level)." compatibility, API, report";
+            my $Description = "$Level compatibility report for the ".$TargetTitle." ".$TargetComponent." between ".$Descriptor{1}{"Version"}." and ".$Descriptor{2}{"Version"}." versions";
             if($Level eq "Binary")
             {
                 if(getArch(1) eq getArch(2)
@@ -17875,13 +17472,13 @@ sub getReport($)
                 }
             }
             my $Report = "<!-\- $MetaData -\->\n".composeHTML_Head($Title, $Keywords, $Description, $CssStyles, $JScripts)."\n<body>\n<div><a name='Top'></a>\n";
-            $Report .= get_Report_Header($Level)."\n".$Summary."\n";
+            $Report .= get_Report_Title($Level)."\n".$Summary."\n";
             $Report .= get_Report_Added($Level).get_Report_Removed($Level);
             $Report .= get_Report_Problems("High", $Level).get_Report_Problems("Medium", $Level).get_Report_Problems("Low", $Level).get_Report_Problems("Safe", $Level);
             $Report .= get_SourceInfo();
             $Report .= "</div>\n<br/><br/><br/><hr/>\n";
-            $Report .= getReportFooter($TargetLibraryFName, not $JoinReport);
-            $Report .= "\n<div style='height:999px;'></div>\n</body></html>";
+            $Report .= getReportFooter("Single");
+            $Report .= "\n</body></html>\n";
             return $Report;
         }
     }
@@ -17922,39 +17519,35 @@ sub createReport()
     }
 }
 
-sub getReportFooter($$)
+sub getReportFooter($)
 {
-    my ($LibName, $Wide) = @_;
-    my $FooterStyle = $Wide?"width:99%":"width:97%;padding-top:3px";
-    my $Footer = "<div style='$FooterStyle;font-size:11px;' align='right'><i>Generated on ".(localtime time); # report date
-    $Footer .= " for <span style='font-weight:bold'>$LibName</span>"; # tested library/system name
-    $Footer .= " by <a href='".$HomePage{"Wiki"}."'>ABI Compliance Checker</a>"; # tool name
-    my $ToolSummary = "<br/>A tool for checking backward compatibility of a C/C++ library API&#160;&#160;";
-    $Footer .= " $TOOL_VERSION &#160;$ToolSummary</i></div>"; # tool version
+    my $Type = $_[0];
+    my $Class = "footer";
+    
+    if($Type eq "Double") {
+        $Class .= " double_report";
+    }
+    
+    my $Footer = "<div class=\'$Class\' align='right'><i>Generated on ".(localtime time);
+    $Footer .= " by <a href='".$HomePage."'>ABI Compliance Checker</a> $TOOL_VERSION &#160;";
+    $Footer .= "</i></div>";
+    $Footer .= "<br/>";
     return $Footer;
 }
 
 sub get_Report_Problems($$)
 {
     my ($Severity, $Level) = @_;
+    
     my $Report = get_Report_TypeProblems($Severity, $Level);
     if(my $SProblems = get_Report_SymbolProblems($Severity, $Level)) {
         $Report .= $SProblems;
     }
-    if($Severity eq "Low")
-    {
-        $Report .= get_Report_ChangedConstants("Low", $Level);
-        if($ReportFormat eq "html")
-        {
-            if($CheckImpl and $Level eq "Binary") {
-                $Report .= get_Report_Impl();
-            }
-        }
+    
+    if($Severity eq "Low" or $Severity eq "Safe") {
+        $Report .= get_Report_ChangedConstants($Severity, $Level);
     }
-    if($Severity eq "Safe")
-    {
-        $Report .= get_Report_ChangedConstants("Safe", $Level);
-    }
+    
     if($ReportFormat eq "html")
     {
         if($Report)
@@ -18916,7 +18509,7 @@ sub readSymbols_App($)
     my $Path = $_[0];
     return () if(not $Path);
     my @Imported = ();
-    if($OSgroup eq "macos")
+    if($OStarget eq "macos")
     {
         my $NM = get_CmdPath("nm");
         if(not $NM) {
@@ -18931,7 +18524,7 @@ sub readSymbols_App($)
         }
         close(APP);
     }
-    elsif($OSgroup eq "windows")
+    elsif($OStarget eq "windows")
     {
         my $DumpBinCmd = get_CmdPath("dumpbin");
         if(not $DumpBinCmd) {
@@ -19131,13 +18724,6 @@ sub readSymbols_Lib($$$$$$)
     return () if(isCyclical(\@RecurLib, $Lib_Name) or $#RecurLib>=1);
     $CheckedDyLib{$LibVersion}{$Lib_Name} = 1;
     
-    if($CheckImpl)
-    {
-        if(not $IsNeededLib) {
-            getImplementations($LibVersion, $Lib_Path);
-        }
-    }
-    
     push(@RecurLib, $Lib_Name);
     my (%Value_Interface, %Interface_Value, %NeededLib) = ();
     my $Lib_ShortName = parse_libname($Lib_Name, "name+ext", $OStarget);
@@ -19214,10 +18800,6 @@ sub readSymbols_Lib($$$$$$)
                             setLanguage($LibVersion, "C++");
                         }
                     }
-                    if($CheckObjectsOnly
-                    and $LibVersion==1) {
-                        $CheckedSymbols{"Binary"}{$Symbol} = 1;
-                    }
                 }
             }
         }
@@ -19289,10 +18871,6 @@ sub readSymbols_Lib($$$$$$)
                         if(index($realname, "_Z")==0 or index($realname, "?")==0) {
                             setLanguage($LibVersion, "C++");
                         }
-                    }
-                    if($CheckObjectsOnly
-                    and $LibVersion==1) {
-                        $CheckedSymbols{"Binary"}{$realname} = 1;
                     }
                 }
             }
@@ -19405,10 +18983,6 @@ sub readSymbols_Lib($$$$$$)
                         if(index($Symbol, "_Z")==0 or index($Symbol, "?")==0) {
                             setLanguage($LibVersion, "C++");
                         }
-                    }
-                    if($CheckObjectsOnly
-                    and $LibVersion==1) {
-                        $CheckedSymbols{"Binary"}{$Symbol} = 1;
                     }
                 }
             }
@@ -19544,13 +19118,10 @@ sub checkSystemFiles()
             }
         }
         
-        if(not $CheckObjectsOnly)
-        {
-            # search for headers in /usr/lib
-            my @Headers = grep { /\.h(pp|xx)?\Z|\/include\// } @Files;
-            @Headers = grep { not /\/(gcc|jvm|syslinux|kbd|parrot|xemacs|perl|llvm)/ } @Headers;
-            push(@SysHeaders, @Headers);
-        }
+        # search for headers in /usr/lib
+        my @Headers = grep { /\.h(pp|xx)?\Z|\/include\// } @Files;
+        @Headers = grep { not /\/(gcc|jvm|syslinux|kbd|parrot|xemacs|perl|llvm)/ } @Headers;
+        push(@SysHeaders, @Headers);
         
         # search for libraries in /usr/lib (including symbolic links)
         my @Libs = grep { /\.$LIB_EXT[0-9.]*\Z/ } @Files;
@@ -19562,23 +19133,20 @@ sub checkSystemFiles()
         }
     }
     
-    if(not $CheckObjectsOnly)
+    foreach my $DevelPath (@{$SystemPaths{"include"}})
     {
-        foreach my $DevelPath (@{$SystemPaths{"include"}})
-        {
-            next if(not -d $DevelPath);
-            # search for all header files in the /usr/include
-            # with or without extension (ncurses.h, QtCore, ...)
-            push(@SysHeaders, cmd_find($DevelPath,"f"));
-            foreach my $Link (cmd_find($DevelPath,"l"))
-            { # add symbolic links
-                if(-f $Link) {
-                    push(@SysHeaders, $Link);
-                }
+        next if(not -d $DevelPath);
+        # search for all header files in the /usr/include
+        # with or without extension (ncurses.h, QtCore, ...)
+        push(@SysHeaders, cmd_find($DevelPath,"f"));
+        foreach my $Link (cmd_find($DevelPath,"l"))
+        { # add symbolic links
+            if(-f $Link) {
+                push(@SysHeaders, $Link);
             }
         }
-        get_prefixes_I(\@SysHeaders, \%SystemHeaders);
     }
+    get_prefixes_I(\@SysHeaders, \%SystemHeaders);
 }
 
 sub getSOPaths($)
@@ -19810,7 +19378,7 @@ sub registerObject($$)
     
     my $Name = get_filename($Path);
     $RegisteredObjects{$LibVersion}{$Name} = $Path;
-    if($OSgroup=~/linux|bsd/i)
+    if($OStarget=~/linux|bsd/i)
     {
         if(my $SONAME = getSONAME($Path)) {
             $RegisteredSONAMEs{$LibVersion}{$SONAME} = $Path;
@@ -19854,7 +19422,7 @@ sub getArch_Object($)
         "sparc:v8plus" => "sparcv9"
     );
     
-    if($OSgroup eq "windows")
+    if($OStarget eq "windows")
     {
         my $DumpbinCmd = get_CmdPath("dumpbin");
         if(not $DumpbinCmd) {
@@ -19872,7 +19440,7 @@ sub getArch_Object($)
             }
         }
     }
-    elsif($OSgroup=~/linux|bsd/)
+    elsif($OStarget=~/linux|bsd/)
     {
         my $ObjdumpCmd = get_CmdPath("objdump");
         if(not $ObjdumpCmd) {
@@ -19880,6 +19448,13 @@ sub getArch_Object($)
         }
         
         my $Cmd = $ObjdumpCmd." -f \"$Path\"";
+        
+        if($OSgroup eq "windows") {
+            $Cmd = "set LANG=$LOCALE & ".$Cmd;
+        }
+        else {
+            $Cmd = "LANG=$LOCALE ".$Cmd;
+        }
         my $Out = `$Cmd`;
         
         if($Out=~/architecture:\s+([\w\-\:]+)/)
@@ -20209,6 +19784,7 @@ sub read_ABI_Dump($$)
         $DVersion = $ToolVersion;
     }
     $UsedDump{$LibVersion}{"V"} = $DVersion;
+    $UsedDump{$LibVersion}{"M"} = $ABI->{"LibraryName"};
     
     if($ABI->{"ABI_DUMP_VERSION"})
     {
@@ -20224,22 +19800,10 @@ sub read_ABI_Dump($$)
             exitStatus("Dump_Version", "incompatible version \'$DVersion\' of specified ABI dump (newer than $TOOL_VERSION)");
         }
     }
+    
     if(majorVersion($DVersion)<2)
-    { # support for old ABI dumps
-        if($UseOldDumps)
-        {
-            if(cmpVersions($DVersion, $OLDEST_SUPPORTED_VERSION)<0) {
-                exitStatus("Dump_Version", "incompatible version \'$DVersion\' of specified ABI dump (older than $OLDEST_SUPPORTED_VERSION)");
-            }
-        }
-        else
-        {
-            my $Msg = "incompatible version \'$DVersion\' of specified ABI dump (allowed only 2.0<=V<=$ABI_DUMP_VERSION)";
-            if(cmpVersions($DVersion, $OLDEST_SUPPORTED_VERSION)>=0) {
-                $Msg .= "\nUse -old-dumps option to use old-version dumps ($OLDEST_SUPPORTED_VERSION<=V<2.0)";
-            }
-            exitStatus("Dump_Version", $Msg);
-        }
+    {
+        exitStatus("Dump_Version", "incompatible version \'$DVersion\' of specified ABI dump (allowed only 2.0<=V<=$ABI_DUMP_VERSION)");
     }
     
     if(defined $ABI->{"ABI_DUMPER_VERSION"})
@@ -20387,17 +19951,26 @@ sub read_ABI_Dump($$)
     { # support for old dumps
         $SkipTypes{$LibVersion} = $ABI->{"OpaqueTypes"};
     }
-    $SkipSymbols{$LibVersion} = $ABI->{"SkipSymbols"};
+    
     if(not $SkipSymbols{$LibVersion})
-    { # support for old dumps
-        $SkipSymbols{$LibVersion} = $ABI->{"SkipInterfaces"};
-    }
-    if(not $SkipSymbols{$LibVersion})
-    { # support for old dumps
-        $SkipSymbols{$LibVersion} = $ABI->{"InternalInterfaces"};
+    { # if not defined by -skip-symbols option
+        $SkipSymbols{$LibVersion} = $ABI->{"SkipSymbols"};
+        if(not $SkipSymbols{$LibVersion})
+        { # support for old dumps
+            $SkipSymbols{$LibVersion} = $ABI->{"SkipInterfaces"};
+        }
+        if(not $SkipSymbols{$LibVersion})
+        { # support for old dumps
+            $SkipSymbols{$LibVersion} = $ABI->{"InternalInterfaces"};
+        }
     }
     $SkipNameSpaces{$LibVersion} = $ABI->{"SkipNameSpaces"};
-    $TargetHeaders{$LibVersion} = $ABI->{"TargetHeaders"};
+    
+    if(not $TargetHeaders{$LibVersion})
+    { # if not defined by -headers-list option
+        $TargetHeaders{$LibVersion} = $ABI->{"TargetHeaders"};
+    }
+    
     foreach my $Path (keys(%{$ABI->{"SkipHeaders"}}))
     {
         $SkipHeadersList{$LibVersion}{$Path} = $ABI->{"SkipHeaders"}{$Path};
@@ -20759,12 +20332,7 @@ sub read_Source_DumpInfo($$)
         $Descriptor{$LibVersion}{"Headers"} = "OK";
     }
     foreach my $Identity (sort {$ABI->{"Headers"}{$a}<=>$ABI->{"Headers"}{$b}} keys(%{$ABI->{"Headers"}}))
-    { # headers info is stored in the old dumps in the different way
-        if($UseOldDumps
-        and my $Name = $ABI->{"Headers"}{$Identity}{"Name"})
-        { # support for old dumps: headers info corrected in 1.22
-            $Identity = $Name;
-        }
+    {
         $Registered_Headers{$LibVersion}{$Identity}{"Identity"} = $Identity;
         $Registered_Headers{$LibVersion}{$Identity}{"Pos"} = $ABI->{"Headers"}{$Identity};
     }
@@ -20774,7 +20342,7 @@ sub read_Source_DumpInfo($$)
         $Descriptor{$LibVersion}{"Sources"} = "OK";
     }
     foreach my $Name (sort {$ABI->{"Sources"}{$a}<=>$ABI->{"Sources"}{$b}} keys(%{$ABI->{"Sources"}}))
-    { # headers info is stored in the old dumps in the different way
+    {
         $Registered_Sources{$LibVersion}{$Name}{"Identity"} = $Name;
         $Registered_Sources{$LibVersion}{$Name}{"Pos"} = $ABI->{"Headers"}{$Name};
     }
@@ -20817,6 +20385,16 @@ sub createDescriptor($$)
         }
         elsif(is_header($Path, 2, $LibVersion))
         { # header file
+            $CheckHeadersOnly = 1;
+            
+            if($LibVersion==1) {
+                $TargetVersion{$LibVersion} = "X";
+            }
+            
+            if($LibVersion==2) {
+                $TargetVersion{$LibVersion} = "Y";
+            }
+            
             return "
                 <version>
                     ".$TargetVersion{$LibVersion}."
@@ -20828,21 +20406,6 @@ sub createDescriptor($$)
 
                 <libs>
                     none
-                </libs>";
-        }
-        elsif(parse_libname($Path, "name", $OStarget))
-        { # shared object
-            return "
-                <version>
-                    ".$TargetVersion{$LibVersion}."
-                </version>
-
-                <headers>
-                    none
-                </headers>
-
-                <libs>
-                    $Path
                 </libs>";
         }
         else
@@ -20931,7 +20494,6 @@ sub detect_bin_default_paths()
 
 sub detect_inc_default_paths()
 {
-    return () if(not $GCC_PATH);
     my %DPaths = ("Cpp"=>[],"Gcc"=>[],"Inc"=>[]);
     writeFile("$TMP_DIR/empty.h", "");
     foreach my $Line (split(/\n/, `$GCC_PATH -v -x c++ -E \"$TMP_DIR/empty.h\" 2>&1`))
@@ -20997,8 +20559,8 @@ sub detect_default_paths($)
         $HSearch = 0;
     }
     if(@{$SystemPaths{"lib"}})
-    { # <search_headers> section of the XML descriptor
-      # do NOT search for systems headers
+    { # <search_libs> section of the XML descriptor
+      # do NOT search for systems libraries
         $LSearch = 0;
     }
     foreach my $Type (keys(%{$OS_AddPath{$OSgroup}}))
@@ -21140,45 +20702,49 @@ sub detect_default_paths($)
             exitStatus("Not_Found", "can't find GCC>=3.0 in PATH");
         }
         
-        if(not $CheckObjectsOnly_Opt)
+        if(my $GCC_Ver = get_dumpversion($GCC_PATH))
         {
-            if(my $GCC_Ver = get_dumpversion($GCC_PATH))
+            my $GccTarget = get_dumpmachine($GCC_PATH);
+            
+            if($GccTarget=~/linux/)
             {
-                my $GccTarget = get_dumpmachine($GCC_PATH);
-                printMsg("INFO", "Using GCC $GCC_Ver ($GccTarget, target: ".getArch_GCC(1).")");
-                if($GccTarget=~/symbian/)
-                {
-                    $OStarget = "symbian";
-                    $LIB_EXT = $OS_LibExt{$LIB_TYPE}{$OStarget};
-                }
-                
-                # check GCC version
-                if($GCC_Ver=~/\A4\.8(|\.[012])\Z/)
-                { # bug http://gcc.gnu.org/bugzilla/show_bug.cgi?id=57850
-                  # introduced in 4.8
-                  # fixed in 4.8.3
-                    printMsg("WARNING", "Not working properly with GCC $GCC_Ver. Please update or downgrade GCC or use a local installation by --gcc-path=PATH option.");
-                    $EMERGENCY_MODE_48 = 1;
-                }
+                $OStarget = "linux";
+                $LIB_EXT = $OS_LibExt{$LIB_TYPE}{$OStarget};
             }
-            else {
-                exitStatus("Error", "something is going wrong with the GCC compiler");
+            elsif($GccTarget=~/symbian/)
+            {
+                $OStarget = "symbian";
+                $LIB_EXT = $OS_LibExt{$LIB_TYPE}{$OStarget};
+            }
+            
+            printMsg("INFO", "Using GCC $GCC_Ver ($GccTarget, target: ".getArch_GCC(1).")");
+            
+            # check GCC version
+            if($GCC_Ver=~/\A4\.8(|\.[012])\Z/)
+            { # bug http://gcc.gnu.org/bugzilla/show_bug.cgi?id=57850
+                # introduced in 4.8
+                # fixed in 4.8.3
+                printMsg("WARNING", "Not working properly with GCC $GCC_Ver. Please update or downgrade GCC or use a local installation by --gcc-path=PATH option.");
+                $EMERGENCY_MODE_48 = 1;
             }
         }
-        if($HSearch)
-        {
-            if(not $NoStdInc)
-            { # do NOT search in GCC standard paths
-                my %DPaths = detect_inc_default_paths();
-                @DefaultCppPaths = @{$DPaths{"Cpp"}};
-                @DefaultGccPaths = @{$DPaths{"Gcc"}};
-                @DefaultIncPaths = @{$DPaths{"Inc"}};
-                push_U($SystemPaths{"include"}, @DefaultIncPaths);
-            }
+        else {
+            exitStatus("Error", "something is going wrong with the GCC compiler");
         }
     }
     if($HSearch)
-    { # users include paths
+    {
+        # GCC standard paths
+        if($GCC_PATH and not $NoStdInc)
+        {
+            my %DPaths = detect_inc_default_paths();
+            @DefaultCppPaths = @{$DPaths{"Cpp"}};
+            @DefaultGccPaths = @{$DPaths{"Gcc"}};
+            @DefaultIncPaths = @{$DPaths{"Inc"}};
+            push_U($SystemPaths{"include"}, @DefaultIncPaths);
+        }
+        
+        # users include paths
         my $IncPath = "/usr/include";
         if($SystemRoot) {
             $IncPath = $SystemRoot.$IncPath;
@@ -21461,12 +21027,13 @@ sub shortest_name($)
 sub createSymbolsList($$$$$)
 {
     my ($DPath, $SaveTo, $LName, $LVersion, $ArchName) = @_;
+    
     read_ABI_Dump(1, $DPath);
-    if(not $CheckObjectsOnly) {
-        prepareSymbols(1);
-    }
+    prepareSymbols(1);
+    
     my %SymbolHeaderLib = ();
     my $Total = 0;
+    
     # Get List
     foreach my $Symbol (sort keys(%{$CompleteSignature{1}}))
     {
@@ -21552,8 +21119,8 @@ sub createSymbolsList($$$$$)
     my $Description = "List of symbols in $LName ($LVersion) on ".showArch($ArchName);
     $SYMBOLS_LIST = composeHTML_Head($Title, $Keywords, $Description, $CssStyles, $JScripts)."
     <body><div>\n$SYMBOLS_LIST</div>
-    <br/><br/><hr/>\n".getReportFooter($LName, 1)."
-    <div style='height:999px;'></div></body></html>";
+    <br/><br/><hr/>\n".getReportFooter("Single")."
+    </body></html>";
     writeFile($SaveTo, $SYMBOLS_LIST);
 }
 
@@ -21592,69 +21159,6 @@ sub is_target_header($$)
         }
     }
     return 0;
-}
-
-sub checkVersionNum($$)
-{
-    my ($LibVersion, $Path) = @_;
-    if(my $VerNum = $TargetVersion{$LibVersion}) {
-        return $VerNum;
-    }
-    my $UsedAltDescr = 0;
-    foreach my $Part (split(/\s*,\s*/, $Path))
-    { # try to get version string from file path
-        next if(isDump($Part)); # ABI dump
-        next if($Part=~/\.(xml|desc)\Z/i); # XML descriptor
-        my $VerNum = "";
-        if(parse_libname($Part, "name", $OStarget))
-        {
-            $UsedAltDescr = 1;
-            $VerNum = parse_libname($Part, "version", $OStarget);
-            if(not $VerNum) {
-                $VerNum = readStrVer($Part);
-            }
-        }
-        elsif(is_header($Part, 2, $LibVersion) or -d $Part)
-        {
-            $UsedAltDescr = 1;
-            $VerNum = readStrVer($Part);
-        }
-        if($VerNum ne "")
-        {
-            $TargetVersion{$LibVersion} = $VerNum;
-            if($DumpAPI) {
-                printMsg("WARNING", "setting version number to $VerNum (use -vnum option to change it)");
-            }
-            else {
-                printMsg("WARNING", "setting ".($LibVersion==1?"1st":"2nd")." version number to \"$VerNum\" (use -v$LibVersion option to change it)");
-            }
-            return $TargetVersion{$LibVersion};
-        }
-    }
-    if($UsedAltDescr)
-    {
-        if($DumpAPI) {
-            exitStatus("Error", "version number is not set (use -vnum option)");
-        }
-        else {
-            exitStatus("Error", ($LibVersion==1?"1st":"2nd")." version number is not set (use -v$LibVersion option)");
-        }
-    }
-}
-
-sub readStrVer($)
-{
-    my $Str = $_[0];
-    return "" if(not $Str);
-    $Str=~s/\Q$TargetLibraryName\E//g;
-    if($Str=~/(\/|\\|\w|\A)[\-\_]*(\d+[\d\.\-]+\d+|\d+)/)
-    { # .../libssh-0.4.0/...
-        return $2;
-    }
-    elsif(my $V = parse_libname($Str, "version", $OStarget)) {
-        return $V;
-    }
-    return "";
 }
 
 sub readLibs($)
@@ -21961,27 +21465,16 @@ sub create_ABI_Dump()
         exitStatus("Access_Error", "can't access \'$DumpAPI\'");
     }
     
-    my @DParts = split(/\s*,\s*/, $DumpAPI);
-    foreach my $Part (@DParts)
-    {
-        if(not -e $Part) {
-            exitStatus("Access_Error", "can't access \'$Part\'");
-        }
+    if(isDump($DumpAPI)) {
+        read_ABI_Dump(1, $DumpAPI);
     }
-    checkVersionNum(1, $DumpAPI);
-    foreach my $Part (@DParts)
-    {
-        if(isDump($Part)) {
-            read_ABI_Dump(1, $Part);
-        }
-        else {
-            readDescriptor(1, createDescriptor(1, $Part));
-        }
+    else {
+        readDescriptor(1, createDescriptor(1, $DumpAPI));
     }
     
     if(not $Descriptor{1}{"Version"})
-    { # set to default: X
-        $Descriptor{1}{"Version"} = "X";
+    { # set to default: N
+        $Descriptor{1}{"Version"} = "N";
     }
     
     initLogging(1);
@@ -22024,9 +21517,7 @@ sub create_ABI_Dump()
         if($CheckHeadersOnly) {
             setLanguage(1, "C++");
         }
-        if(not $CheckObjectsOnly) {
-            searchForHeaders(1);
-        }
+        searchForHeaders(1);
         $WORD_SIZE{1} = detectWordSize(1);
     }
     if(not $Descriptor{1}{"Dump"})
@@ -22038,7 +21529,7 @@ sub create_ABI_Dump()
     cleanDump(1);
     if(not keys(%{$SymbolInfo{1}}))
     { # check if created dump is valid
-        if(not $ExtendedCheck and not $CheckObjectsOnly)
+        if(not $ExtendedCheck)
         {
             if($CheckHeadersOnly) {
                 exitStatus("Empty_Set", "the set of public symbols is empty");
@@ -22327,50 +21818,38 @@ sub compareInit()
     if(not $Descriptor{1}{"Path"}) {
         exitStatus("Error", "-old option is not specified");
     }
-    my @DParts1 = split(/\s*,\s*/, $Descriptor{1}{"Path"});
-    foreach my $Part (@DParts1)
-    {
-        if(not -e $Part) {
-            exitStatus("Access_Error", "can't access \'$Part\'");
-        }
+    if(not -e $Descriptor{1}{"Path"}) {
+        exitStatus("Access_Error", "can't access \'".$Descriptor{1}{"Path"}."\'");
     }
+    
     if(not $Descriptor{2}{"Path"}) {
         exitStatus("Error", "-new option is not specified");
     }
-    my @DParts2 = split(/\s*,\s*/, $Descriptor{2}{"Path"});
-    foreach my $Part (@DParts2)
-    {
-        if(not -e $Part) {
-            exitStatus("Access_Error", "can't access \'$Part\'");
-        }
+    if(not -e $Descriptor{2}{"Path"}) {
+        exitStatus("Access_Error", "can't access \'".$Descriptor{2}{"Path"}."\'");
     }
+    
     detect_default_paths("bin"); # to extract dumps
-    if($#DParts1==0 and $#DParts2==0
-    and isDump($Descriptor{1}{"Path"})
+    if(isDump($Descriptor{1}{"Path"})
     and isDump($Descriptor{2}{"Path"}))
     { # optimization: equal ABI dumps
         quickEmptyReports();
     }
-    checkVersionNum(1, $Descriptor{1}{"Path"});
-    checkVersionNum(2, $Descriptor{2}{"Path"});
+    
     printMsg("INFO", "preparation, please wait ...");
-    foreach my $Part (@DParts1)
-    {
-        if(isDump($Part)) {
-            read_ABI_Dump(1, $Part);
-        }
-        else {
-            readDescriptor(1, createDescriptor(1, $Part));
-        }
+    
+    if(isDump($Descriptor{1}{"Path"})) {
+        read_ABI_Dump(1, $Descriptor{1}{"Path"});
     }
-    foreach my $Part (@DParts2)
-    {
-        if(isDump($Part)) {
-            read_ABI_Dump(2, $Part);
-        }
-        else {
-            readDescriptor(2, createDescriptor(2, $Part));
-        }
+    else {
+        readDescriptor(1, createDescriptor(1, $Descriptor{1}{"Path"}));
+    }
+    
+    if(isDump($Descriptor{2}{"Path"})) {
+        read_ABI_Dump(2, $Descriptor{2}{"Path"});
+    }
+    else {
+        readDescriptor(2, createDescriptor(2, $Descriptor{2}{"Path"}));
     }
     
     if(not $Descriptor{1}{"Version"})
@@ -22385,66 +21864,25 @@ sub compareInit()
     
     initLogging(1);
     initLogging(2);
-    # check consistency
-    if(not $Descriptor{1}{"Headers"}
-    and not $Descriptor{1}{"Libs"}) {
-        exitStatus("Error", "descriptor d1 does not contain both header files and libraries info");
+    
+    # check input data
+    if(not $Descriptor{1}{"Headers"}) {
+        exitStatus("Error", "can't find header files info in descriptor d1");
     }
-    if(not $Descriptor{2}{"Headers"}
-    and not $Descriptor{2}{"Libs"}) {
-        exitStatus("Error", "descriptor d2 does not contain both header files and libraries info");
+    if(not $Descriptor{2}{"Headers"}) {
+        exitStatus("Error", "can't find header files info in descriptor d2");
     }
-    if($Descriptor{1}{"Headers"} and not $Descriptor{1}{"Libs"}
-    and not $Descriptor{2}{"Headers"} and $Descriptor{2}{"Libs"}) {
-        exitStatus("Error", "can't compare headers with $SLIB_TYPE libraries");
-    }
-    elsif(not $Descriptor{1}{"Headers"} and $Descriptor{1}{"Libs"}
-    and $Descriptor{2}{"Headers"} and not $Descriptor{2}{"Libs"}) {
-        exitStatus("Error", "can't compare $SLIB_TYPE libraries with headers");
-    }
-    if(not $Descriptor{1}{"Headers"})
+    
+    if(not $CheckHeadersOnly)
     {
-        if($CheckHeadersOnly_Opt) {
-            exitStatus("Error", "can't find header files info in descriptor d1");
+        if(not $Descriptor{1}{"Libs"}) {
+            exitStatus("Error", "can't find libraries info in descriptor d1");
+        }
+        if(not $Descriptor{2}{"Libs"}) {
+            exitStatus("Error", "can't find libraries info in descriptor d2");
         }
     }
-    if(not $Descriptor{2}{"Headers"})
-    {
-        if($CheckHeadersOnly_Opt) {
-            exitStatus("Error", "can't find header files info in descriptor d2");
-        }
-    }
-    if(not $Descriptor{1}{"Headers"}
-    or not $Descriptor{2}{"Headers"})
-    {
-        if(not $CheckObjectsOnly_Opt)
-        {
-            printMsg("WARNING", "comparing $SLIB_TYPE libraries only");
-            $CheckObjectsOnly = 1;
-        }
-    }
-    if(not $Descriptor{1}{"Libs"})
-    {
-        if($CheckObjectsOnly_Opt) {
-            exitStatus("Error", "can't find $SLIB_TYPE libraries info in descriptor d1");
-        }
-    }
-    if(not $Descriptor{2}{"Libs"})
-    {
-        if($CheckObjectsOnly_Opt) {
-            exitStatus("Error", "can't find $SLIB_TYPE libraries info in descriptor d2");
-        }
-    }
-    if(not $Descriptor{1}{"Libs"}
-    or not $Descriptor{2}{"Libs"})
-    { # comparing standalone header files
-      # comparing ABI dumps created with --headers-only
-        if(not $CheckHeadersOnly_Opt)
-        {
-            printMsg("WARNING", "checking headers only");
-            $CheckHeadersOnly = 1;
-        }
-    }
+    
     if($UseDumps)
     { # --use-dumps
       # parallel processing
@@ -22499,9 +21937,6 @@ sub compareInit()
             }
             if($CheckHeadersOnly) {
                 @PARAMS = (@PARAMS, "-headers-only");
-            }
-            if($CheckObjectsOnly) {
-                @PARAMS = (@PARAMS, "-objects-only");
             }
             if($Debug)
             {
@@ -22558,9 +21993,6 @@ sub compareInit()
             if($CheckHeadersOnly) {
                 @PARAMS = (@PARAMS, "-headers-only");
             }
-            if($CheckObjectsOnly) {
-                @PARAMS = (@PARAMS, "-objects-only");
-            }
             if($Debug)
             {
                 @PARAMS = (@PARAMS, "-debug");
@@ -22575,11 +22007,12 @@ sub compareInit()
             }
         }
         waitpid($pid, 0);
+        
         my @CMP_PARAMS = ("-l", $TargetLibraryName);
         @CMP_PARAMS = (@CMP_PARAMS, "-d1", $DumpPath1);
         @CMP_PARAMS = (@CMP_PARAMS, "-d2", $DumpPath2);
-        if($TargetLibraryFName ne $TargetLibraryName) {
-            @CMP_PARAMS = (@CMP_PARAMS, "-l-full", $TargetLibraryFName);
+        if($TargetTitle ne $TargetLibraryName) {
+            @CMP_PARAMS = (@CMP_PARAMS, "-title", $TargetTitle);
         }
         if($ShowRetVal) {
             @CMP_PARAMS = (@CMP_PARAMS, "-show-retval");
@@ -22610,20 +22043,11 @@ sub compareInit()
         if($CheckHeadersOnly) {
             @CMP_PARAMS = (@CMP_PARAMS, "-headers-only");
         }
-        if($CheckObjectsOnly) {
-            @CMP_PARAMS = (@CMP_PARAMS, "-objects-only");
-        }
         if($BinaryOnly) {
             @CMP_PARAMS = (@CMP_PARAMS, "-binary");
         }
         if($SourceOnly) {
             @CMP_PARAMS = (@CMP_PARAMS, "-source");
-        }
-        if($Browse) {
-            @CMP_PARAMS = (@CMP_PARAMS, "-browse", $Browse);
-        }
-        if($OpenReport) {
-            @CMP_PARAMS = (@CMP_PARAMS, "-open");
         }
         if($Debug)
         {
@@ -22647,9 +22071,7 @@ sub compareInit()
         if($CheckHeadersOnly) {
             setLanguage(1, "C++");
         }
-        if(not $CheckObjectsOnly) {
-            searchForHeaders(1);
-        }
+        searchForHeaders(1);
         $WORD_SIZE{1} = detectWordSize(1);
     }
     if(not $Descriptor{2}{"Dump"})
@@ -22660,9 +22082,7 @@ sub compareInit()
         if($CheckHeadersOnly) {
             setLanguage(2, "C++");
         }
-        if(not $CheckObjectsOnly) {
-            searchForHeaders(2);
-        }
+        searchForHeaders(2);
         $WORD_SIZE{2} = detectWordSize(2);
     }
     if($WORD_SIZE{1} ne $WORD_SIZE{2})
@@ -22696,17 +22116,14 @@ sub compareInit()
     if($AppPath and not keys(%{$Symbol_Library{1}})) {
         printMsg("WARNING", "the application ".get_filename($AppPath)." has no symbols imported from the $SLIB_TYPE libraries");
     }
-    # started to process input data
-    if(not $CheckObjectsOnly)
-    {
-        if($Descriptor{1}{"Headers"}
-        and not $Descriptor{1}{"Dump"}) {
-            readHeaders(1);
-        }
-        if($Descriptor{2}{"Headers"}
-        and not $Descriptor{2}{"Dump"}) {
-            readHeaders(2);
-        }
+    # process input data
+    if($Descriptor{1}{"Headers"}
+    and not $Descriptor{1}{"Dump"}) {
+        readHeaders(1);
+    }
+    if($Descriptor{2}{"Headers"}
+    and not $Descriptor{2}{"Dump"}) {
+        readHeaders(2);
     }
     
     # clean memory
@@ -22754,14 +22171,17 @@ sub compareInit()
 sub compareAPIs($)
 {
     my $Level = $_[0];
+    
     readRules($Level);
     loadModule("CallConv");
+    
     if($Level eq "Binary") {
         printMsg("INFO", "comparing ABIs ...");
     }
     else {
         printMsg("INFO", "comparing APIs ...");
     }
+    
     if($CheckHeadersOnly
     or $Level eq "Source")
     { # added/removed in headers
@@ -22773,12 +22193,10 @@ sub compareAPIs($)
         detectAdded($Level);
         detectRemoved($Level);
     }
-    if(not $CheckObjectsOnly)
-    {
-        mergeSymbols($Level);
-        if(keys(%{$CheckedSymbols{$Level}})) {
-            mergeConstants($Level);
-        }
+    
+    mergeSymbols($Level);
+    if(keys(%{$CheckedSymbols{$Level}})) {
+        mergeConstants($Level);
     }
     
     $Cache{"mergeTypes"} = (); # free memory
@@ -22791,10 +22209,6 @@ sub compareAPIs($)
     else
     { # added/removed in libs
         mergeLibs($Level);
-        if($CheckImpl
-        and $Level eq "Binary") {
-            mergeImpl();
-        }
     }
 }
 
@@ -22808,7 +22222,6 @@ sub getSysOpts()
     "CheckHeadersOnly"=>$CheckHeadersOnly,
     
     "SystemRoot"=>$SystemRoot,
-    "MODULES_DIR"=>$MODULES_DIR,
     "GCC_PATH"=>$GCC_PATH,
     "TargetSysInfo"=>$TargetSysInfo,
     "CrossPrefix"=>$CrossPrefix,
@@ -22942,13 +22355,14 @@ sub scenario()
         HELP_MESSAGE();
         exit(0);
     }
-    if($InfoMsg) {
+    if($InfoMsg)
+    {
         INFO_MESSAGE();
         exit(0);
     }
     if($ShowVersion)
     {
-        printMsg("INFO", "ABI Compliance Checker (ABICC) $TOOL_VERSION\nCopyright (C) 2014 ROSA Laboratory\nLicense: LGPL or GPL <http://www.gnu.org/licenses/>\nThis program is free software: you can redistribute it and/or modify it.\n\nWritten by Andrey Ponomarenko.");
+        printMsg("INFO", "ABI Compliance Checker (ABICC) $TOOL_VERSION\nCopyright (C) 2015 Andrey Ponomarenko's ABI Laboratory\nLicense: LGPL or GPL <http://www.gnu.org/licenses/>\nThis program is free software: you can redistribute it and/or modify it.\n\nWritten by Andrey Ponomarenko.");
         exit(0);
     }
     if($DumpVersion)
@@ -23009,18 +22423,33 @@ sub scenario()
         detect_default_paths("bin|gcc"); # to compile libs
         loadModule("RegTests");
         testTool($TestDump, $Debug, $Quiet, $ExtendedCheck, $LogMode, $ReportFormat, $DumpFormat,
-        $LIB_EXT, $GCC_PATH, $Browse, $OpenReport, $SortDump, $CheckHeadersOnly, $CheckObjectsOnly);
+        $LIB_EXT, $GCC_PATH, $SortDump, $CheckHeadersOnly);
         exit(0);
     }
     if($DumpSystem)
     { # --dump-system
+        
+        if(not $TargetSysInfo) {
+            exitStatus("Error", "-sysinfo option should be specified to dump system ABI");
+        }
+        
+        if(not -d $TargetSysInfo) {
+            exitStatus("Access_Error", "can't access \'$TargetSysInfo\'");
+        }
+        
         loadModule("SysCheck");
         if($DumpSystem=~/\.(xml|desc)\Z/)
         { # system XML descriptor
             if(not -f $DumpSystem) {
                 exitStatus("Access_Error", "can't access file \'$DumpSystem\'");
             }
-            my $Ret = readSystemDescriptor(readFile($DumpSystem));
+            
+            my $SDesc = readFile($DumpSystem);
+            if(my $RelDir = $RelativeDirectory{1}) {
+                $SDesc =~ s/{RELPATH}/$RelDir/g;
+            }
+            
+            my $Ret = readSystemDescriptor($SDesc);
             foreach (@{$Ret->{"Tools"}})
             {
                 push_U($SystemPaths{"bin"}, $_);
@@ -23076,12 +22505,6 @@ sub scenario()
         cmpSystems($Descriptor{1}{"Path"}, $Descriptor{2}{"Path"}, getSysOpts());
         exit(0);
     }
-    if($GenerateTemplate)
-    {
-        writeFile("VERSION.xml", $DescriptorTemplate."\n");
-        printMsg("INFO", "XML-descriptor template ./VERSION.xml has been generated");
-        exit(0);
-    }
     if(not $TargetLibraryName) {
         exitStatus("Error", "library name is not selected (-l option)");
     }
@@ -23091,12 +22514,10 @@ sub scenario()
             exitStatus("Error", "\"\\\", \"\/\" and \"*\" symbols are not allowed in the library name");
         }
     }
-    if(not $TargetLibraryFName) {
-        $TargetLibraryFName = $TargetLibraryName;
+    if(not $TargetTitle) {
+        $TargetTitle = $TargetLibraryName;
     }
-    if($CheckHeadersOnly_Opt and $CheckObjectsOnly_Opt) {
-        exitStatus("Error", "you can't specify both -headers-only and -objects-only options at the same time");
-    }
+    
     if($SymbolsListPath)
     {
         if(not -f $SymbolsListPath) {
@@ -23106,13 +22527,22 @@ sub scenario()
             $SymbolsList{$Interface} = 1;
         }
     }
+    if($TypesListPath)
+    {
+        if(not -f $TypesListPath) {
+            exitStatus("Access_Error", "can't access file \'$TypesListPath\'");
+        }
+        foreach my $Type (split(/\s*\n\s*/, readFile($TypesListPath))) {
+            $TypesList{$Type} = 1;
+        }
+    }
     if($SkipSymbolsListPath)
     {
         if(not -f $SkipSymbolsListPath) {
             exitStatus("Access_Error", "can't access file \'$SkipSymbolsListPath\'");
         }
         foreach my $Interface (split(/\s*\n\s*/, readFile($SkipSymbolsListPath))) {
-            $SkipSymbolsList{$Interface} = 1;
+            $SkipSymbols{$Interface} = 1;
         }
     }
     if($SkipHeadersPath)
@@ -23160,6 +22590,8 @@ sub scenario()
         if(not -f $AppPath) {
             exitStatus("Access_Error", "can't access file \'$AppPath\'");
         }
+        
+        detect_default_paths("bin|gcc");
         foreach my $Interface (readSymbols_App($AppPath)) {
             $SymbolsList_App{$Interface} = 1;
         }
