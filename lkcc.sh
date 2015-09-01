@@ -3,7 +3,8 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
-BASE_URL='ftp://ftp.kernel.org/pub/linux/kernel/v3.x/'
+#BASE_URL='ftp://ftp.kernel.org/pub/linux/kernel/v3.x/'
+BASE_URL='ftp://www.mirrorservice.org/sites/ftp.kernel.org/pub/linux/kernel/v3.x/'
 REPORTS_DIR='./reports/'
 DUMPS_DIR='./dumps/'
 TEMP_DIR='./temp/'
@@ -57,6 +58,7 @@ compile_kernel() {
 	make -C "$kdir" O="`pwd`/$kdir" KCONFIG_CONFIG=custom.config defconfig 2>&1 > /dev/null
 	#Enable CONFIG_DEBUG_INFO
 	echo "CONFIG_DEBUG_INFO=y" >> "$kdir/custom.config"
+	echo "CONFIG_DEBUG_INFO_REDUCED=n" >> "$kdir/custom.config"
 	#Make the kernel say "No" to anything that doesn't have a default setting yet
 	make -C "$kdir" O="`pwd`/$kdir" KCONFIG_ALLCONFIG=custom.config allnoconfig 2>&1 > /dev/null
 	ncpu=`cat /proc/cpuinfo | grep processor | wc -l`
